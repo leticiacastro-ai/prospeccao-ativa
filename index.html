@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prospecção Ativa — Funil e desempenho por SDR</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+  :root{
+    --canvas:#F4F5F7; --card:#FFFFFF; --ink:#12161F; --muted:#667085; --faint:#8A93A2;
+    --line:#E6E8EC; --win:#1C8A54;
+    --s1:#B9C4D0; --s2:#7E9FC0; --s3:#4A79B0; --s4:#2A9E8C; --s5:#1C8A54;
+    --shadow:0 1px 2px rgba(18,22,31,.04), 0 8px 24px rgba(18,22,31,.05);
+  }
+  *{box-sizing:border-box;} html,body{margin:0;padding:0;}
+  body{background:var(--canvas);color:var(--ink);font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.45;}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 22px 64px;}
+
+  .top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;}
+  .brand h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.02em;font-size:26px;margin:0;line-height:1.05;}
+  .brand p{margin:6px 0 0;color:var(--muted);font-size:13.5px;}
+  .badge{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;}
+  .badge::before{content:"";width:6px;height:6px;border-radius:50%;}
+  .badge.exemplo{background:#FFF6E9;color:#8A5A12;border:1px solid #F3DFBE;}
+  .badge.exemplo::before{background:#E4A028;}
+  .badge.aovivo{background:#E9F7EF;color:#116B3D;border:1px solid #C4E9D3;}
+  .badge.aovivo::before{background:#1C8A54;}
+  .controls{display:flex;align-items:center;gap:10px;}
+  select,button{font-family:inherit;font-size:13.5px;}
+  select{appearance:none;background:var(--card);border:1px solid var(--line);color:var(--ink);padding:9px 34px 9px 13px;border-radius:10px;cursor:pointer;font-weight:500;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;}
+  button.refresh{display:inline-flex;align-items:center;gap:7px;background:var(--ink);color:#fff;border:none;padding:9px 15px;border-radius:10px;cursor:pointer;font-weight:600;transition:transform .12s ease,opacity .12s ease;}
+  button.refresh:hover{opacity:.92;} button.refresh:active{transform:translateY(1px);}
+  button.refresh svg{transition:transform .5s ease;} button.refresh.spin svg{transform:rotate(360deg);}
+  :focus-visible{outline:2px solid var(--s3);outline-offset:2px;}
+
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 17px;box-shadow:var(--shadow);}
+  .kpi .lbl{font-size:12px;color:var(--muted);font-weight:500;}
+  .kpi .val{font-family:'Archivo',sans-serif;font-weight:700;font-size:30px;letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums;}
+  .kpi.win .val{color:var(--win);}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:22px 24px;margin-bottom:22px;}
+  .panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:20px;}
+  .panel-head h2{font-family:'Archivo',sans-serif;font-weight:700;font-size:17px;margin:0;letter-spacing:-.01em;}
+  .panel-head .hint{font-size:12.5px;color:var(--muted);}
+
+  .funnel{display:flex;flex-direction:column;gap:2px;}
+  .stage{display:grid;grid-template-columns:132px 1fr 118px;align-items:center;gap:14px;}
+  .stage .name{font-size:13.5px;font-weight:600;color:var(--ink);}
+  .stage .name span{display:block;font-size:11px;color:var(--faint);font-weight:500;}
+  .track{height:38px;background:#F1F3F6;border-radius:8px;overflow:hidden;position:relative;}
+  .fill{height:100%;border-radius:8px;min-width:6px;transform-origin:left;animation:grow .7s cubic-bezier(.22,.61,.36,1) both;}
+  @keyframes grow{from{transform:scaleX(0);}to{transform:scaleX(1);}}
+  .stage .amount{text-align:right;font-family:'Archivo',sans-serif;font-variant-numeric:tabular-nums;}
+  .stage .amount b{font-size:20px;font-weight:700;letter-spacing:-.01em;}
+  .stage .amount span{display:block;font-size:11px;color:var(--faint);font-weight:600;font-family:'Inter';}
+  .step{display:grid;grid-template-columns:132px 1fr 118px;gap:14px;}
+  .step .conv{grid-column:2;display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11.5px;padding:3px 0;}
+  .step .conv b{color:var(--ink);font-weight:600;}
+  .legend{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);}
+  .legend .bar{width:120px;height:8px;border-radius:999px;background:linear-gradient(90deg,var(--s1),var(--s2),var(--s3),var(--s4),var(--s5));}
+
+  .tablewrap{overflow-x:auto;margin:0 -6px;}
+  table{width:100%;border-collapse:collapse;min-width:640px;}
+  th,td{text-align:right;padding:12px 10px;font-size:13.5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;padding-left:6px;}
+  th{color:var(--muted);font-weight:600;font-size:12px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;}
+  th.sortable:hover{color:var(--ink);}
+  th .arrow{opacity:0;margin-left:3px;font-size:10px;}
+  th.asc .arrow,th.desc .arrow{opacity:1;}
+  th.asc .arrow::after{content:"▲";} th.desc .arrow::after{content:"▼";}
+  tbody tr{border-bottom:1px solid #F1F3F6;transition:background .12s ease;}
+  tbody tr:hover{background:#FAFBFC;}
+  td.sdr{font-weight:600;}
+  td.sdr .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:9px;vertical-align:middle;}
+  .conv-cell{display:inline-flex;align-items:center;gap:9px;justify-content:flex-end;min-width:96px;}
+  .conv-cell .mini{width:46px;height:6px;background:#EEF0F3;border-radius:999px;overflow:hidden;}
+  .conv-cell .mini i{display:block;height:100%;background:var(--win);border-radius:999px;}
+  .conv-cell b{font-weight:700;font-family:'Archivo';font-variant-numeric:tabular-nums;}
+  tfoot td{border-top:2px solid var(--line);font-weight:700;color:var(--ink);padding-top:13px;}
+  tfoot td:first-child{font-family:'Inter';}
+
+  .aviso{display:none;background:#FEF3F2;border:1px solid #FEcDCA;color:#9A2A20;font-size:12.5px;padding:10px 14px;border-radius:10px;margin-bottom:18px;}
+  .aviso.show{display:block;}
+  .foot-note{color:var(--faint);font-size:12px;margin-top:26px;text-align:center;}
+  .empty{color:var(--muted);text-align:center;padding:30px 0;font-size:13.5px;}
+
+  @media (max-width:720px){
+    .summary{grid-template-columns:repeat(2,1fr);}
+    .stage,.step{grid-template-columns:96px 1fr 84px;gap:9px;}
+    .stage .name{font-size:12px;} .brand h1{font-size:22px;}
+  }
+  @media (prefers-reduced-motion:reduce){.fill{animation:none;} button.refresh svg{transition:none;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <h1>Prospecção Ativa</h1>
+      <p>Funil macro do outbound no Instagram — do lead prospectado até virar cliente.</p>
+      <span class="badge exemplo" id="statusBadge">Carregando…</span>
+    </div>
+    <div class="controls">
+      <select id="periodo" aria-label="Período">
+        <option value="7">Últimos 7 dias</option>
+        <option value="14">Últimos 14 dias</option>
+        <option value="30" selected>Últimos 30 dias</option>
+        <option value="mes">Este mês</option>
+      </select>
+      <button class="refresh" id="btnRefresh" aria-label="Atualizar dados">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Atualizar
+      </button>
+    </div>
+  </div>
+
+  <div class="aviso" id="aviso"></div>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Funil macro</h2>
+      <div class="legend"><span>Frio</span><span class="bar"></span><span>Cliente</span></div>
+    </div>
+    <div class="funnel" id="funnel"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Desempenho por SDR</h2>
+      <div class="hint">Toque num título de coluna para ordenar</div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="tbody"></tbody>
+        <tfoot id="tfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <p class="foot-note">Considera apenas leads <b>ig-outbound</b> com SDR atribuído. Outras origens (inbound, tráfego pago, formulário) ficam de fora.</p>
+</div>
+
+<script>
+/* ============================================================
+   FONTE DE DADOS
+   Tenta buscar os dados reais em /api/dados (o servidor que fala
+   com o Datacrazy). Se não conseguir — por exemplo, ao abrir o
+   arquivo antes de publicar — cai automaticamente nos dados de
+   exemplo, só pra você ver a tela funcionando.
+   ============================================================ */
+const DADOS_EXEMPLO = [
+  { sdr:"Carla Mendes",   cor:"#4A79B0", prospectou:350, respondeu:95, agendou:41, compareceu:30, cliente:14 },
+  { sdr:"Ana Ribeiro",    cor:"#2A9E8C", prospectou:320, respondeu:78, agendou:34, compareceu:22, cliente:9  },
+  { sdr:"Fernanda Lima",  cor:"#E4A028", prospectou:300, respondeu:84, agendou:38, compareceu:26, cliente:11 },
+  { sdr:"Bruno Costa",    cor:"#B4749B", prospectou:280, respondeu:61, agendou:25, compareceu:15, cliente:5  },
+  { sdr:"Diego Alves",    cor:"#C7623E", prospectou:210, respondeu:38, agendou:14, compareceu:8,  cliente:2  },
+];
+
+let usandoExemplo = false;
+let mensagemErro = '';
+
+async function carregarDados(periodo){
+  try{
+    const r = await fetch('/api/dados?periodo=' + encodeURIComponent(periodo));
+    const j = await r.json();
+    if(!r.ok) throw new Error(j && j.error ? j.error : ('erro ' + r.status));
+    if(!Array.isArray(j)) throw new Error('resposta inesperada do servidor');
+    usandoExemplo = false; mensagemErro = '';
+    return j;
+  }catch(e){
+    usandoExemplo = true;
+    // só mostramos o aviso de erro se NÃO for o caso normal de abrir sem servidor
+    mensagemErro = (String(e).includes('Failed to fetch') || String(e).includes('NetworkError'))
+      ? '' : String(e.message || e);
+    return DADOS_EXEMPLO;
+  }
+}
+
+/* ---------- utilidades ---------- */
+const nf = n => n.toLocaleString('pt-BR');
+const pf = (num,den) => den>0 ? (num/den*100).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%' : '—';
+const sum = (arr,k) => arr.reduce((a,r)=>a+r[k],0);
+
+const ETAPAS = [
+  { key:'prospectou', nome:'Prospectados',   desc:'ig-outbound',        cor:'var(--s1)' },
+  { key:'respondeu',  nome:'Responderam',    desc:'respondeu outbound', cor:'var(--s2)' },
+  { key:'agendou',    nome:'Agendaram',      desc:'status-agendado',    cor:'var(--s3)' },
+  { key:'compareceu', nome:'Compareceram',   desc:'status-compareceu',  cor:'var(--s4)' },
+  { key:'cliente',    nome:'Viraram cliente',desc:'cliente ativo',      cor:'var(--s5)' },
+];
+const COLS = [
+  { key:'sdr',label:'SDR' },{ key:'prospectou',label:'Prospectados' },{ key:'respondeu',label:'Responderam' },
+  { key:'agendou',label:'Agendaram' },{ key:'compareceu',label:'Compareceram' },{ key:'cliente',label:'Clientes' },
+  { key:'conv',label:'Conversão' },
+];
+
+let dados = [];
+let ordenacao = { col:'cliente', dir:'desc' };
+
+function renderStatus(){
+  const b = document.getElementById('statusBadge');
+  const av = document.getElementById('aviso');
+  if(usandoExemplo){
+    b.className = 'badge exemplo'; b.textContent = 'Dados de exemplo';
+  }else{
+    const hora = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    b.className = 'badge aovivo'; b.textContent = 'Ao vivo · atualizado às ' + hora;
+  }
+  if(mensagemErro){ av.textContent = 'Não deu pra buscar os dados reais: ' + mensagemErro + ' — mostrando dados de exemplo.'; av.classList.add('show'); }
+  else { av.classList.remove('show'); }
+}
+
+function renderResumo(){
+  const prosp=sum(dados,'prospectou'), cli=sum(dados,'cliente'), agen=sum(dados,'agendou'), comp=sum(dados,'compareceu');
+  const cards=[
+    {lbl:'Leads prospectados',val:nf(prosp)},
+    {lbl:'Viraram cliente',val:nf(cli),win:true},
+    {lbl:'Conversão geral',val:pf(cli,prosp)},
+    {lbl:'Comparecimento',val:pf(comp,agen)},
+  ];
+  document.getElementById('summary').innerHTML = cards.map(c=>`
+    <div class="kpi ${c.win?'win':''}"><div class="lbl">${c.lbl}</div><div class="val">${c.val}</div></div>`).join('');
+}
+
+function renderFunil(){
+  const totals = ETAPAS.map(e=>({...e, valor:sum(dados,e.key)}));
+  const max = totals[0].valor || 1;
+  let html='';
+  totals.forEach((e,i)=>{
+    const larg = Math.max((e.valor/max)*100, 1.5);
+    html += `<div class="stage">
+      <div class="name">${e.nome}<span>${e.desc}</span></div>
+      <div class="track"><div class="fill" style="width:${larg}%;background:${e.cor}"></div></div>
+      <div class="amount"><b>${nf(e.valor)}</b><span>${pf(e.valor,max)} do topo</span></div></div>`;
+    if(i<totals.length-1){
+      const prox=totals[i+1];
+      html += `<div class="step"><div class="conv">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+        <span><b>${pf(prox.valor,e.valor)}</b> ${prox.nome.toLowerCase()}</span></div></div>`;
+    }
+  });
+  document.getElementById('funnel').innerHTML = html;
+}
+
+function valorOrden(row,col){
+  if(col==='conv') return row.prospectou>0 ? row.cliente/row.prospectou : 0;
+  return row[col];
+}
+function renderTabela(){
+  document.getElementById('thead').innerHTML = COLS.map(c=>{
+    const cls='sortable'+(ordenacao.col===c.key?' '+ordenacao.dir:'');
+    return `<th class="${cls}" data-col="${c.key}">${c.label}<span class="arrow"></span></th>`;
+  }).join('');
+
+  if(dados.length===0){
+    document.getElementById('tbody').innerHTML = `<tr><td colspan="7" class="empty">Nenhum lead encontrado para este período.</td></tr>`;
+    document.getElementById('tfoot').innerHTML = '';
+  }else{
+    const linhas=[...dados].sort((a,b)=>{
+      const va=valorOrden(a,ordenacao.col),vb=valorOrden(b,ordenacao.col);
+      if(typeof va==='string') return ordenacao.dir==='asc'?va.localeCompare(vb):vb.localeCompare(va);
+      return ordenacao.dir==='asc'?va-vb:vb-va;
+    });
+    const maxConv = Math.max(...dados.map(r=>r.prospectou>0?r.cliente/r.prospectou:0), 0.0001);
+    document.getElementById('tbody').innerHTML = linhas.map(r=>{
+      const conv=r.prospectou>0?r.cliente/r.prospectou:0;
+      return `<tr>
+        <td class="sdr"><span class="dot" style="background:${r.cor||'#B9C4D0'}"></span>${r.sdr}</td>
+        <td>${nf(r.prospectou)}</td><td>${nf(r.respondeu)}</td><td>${nf(r.agendou)}</td>
+        <td>${nf(r.compareceu)}</td><td>${nf(r.cliente)}</td>
+        <td><span class="conv-cell"><span class="mini"><i style="width:${(conv/maxConv)*100}%"></i></span><b>${pf(r.cliente,r.prospectou)}</b></span></td>
+      </tr>`;
+    }).join('');
+    const t={prospectou:sum(dados,'prospectou'),respondeu:sum(dados,'respondeu'),agendou:sum(dados,'agendou'),compareceu:sum(dados,'compareceu'),cliente:sum(dados,'cliente')};
+    document.getElementById('tfoot').innerHTML = `<tr>
+      <td>Equipe (${dados.length} SDRs)</td>
+      <td>${nf(t.prospectou)}</td><td>${nf(t.respondeu)}</td><td>${nf(t.agendou)}</td>
+      <td>${nf(t.compareceu)}</td><td>${nf(t.cliente)}</td>
+      <td><span class="conv-cell"><b>${pf(t.cliente,t.prospectou)}</b></span></td></tr>`;
+  }
+
+  document.querySelectorAll('#thead th').forEach(th=>{
+    th.addEventListener('click',()=>{
+      const col=th.dataset.col;
+      if(ordenacao.col===col){ordenacao.dir=ordenacao.dir==='asc'?'desc':'asc';}
+      else{ordenacao.col=col;ordenacao.dir=col==='sdr'?'asc':'desc';}
+      renderTabela();
+    });
+  });
+}
+
+async function atualizar(){
+  const btn=document.getElementById('btnRefresh');
+  btn.classList.add('spin');
+  dados = await carregarDados(document.getElementById('periodo').value);
+  renderStatus(); renderResumo(); renderFunil(); renderTabela();
+  setTimeout(()=>btn.classList.remove('spin'),500);
+}
+
+document.getElementById('btnRefresh').addEventListener('click',atualizar);
+document.getElementById('periodo').addEventListener('change',atualizar);
+atualizar();
+</script>
+</body>
+</html>
