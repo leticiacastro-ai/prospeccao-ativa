@@ -11,9 +11,38 @@
 //  DATACRAZY_API_KEY (configurada na Vercel), nunca no navegador.
 // ============================================================
 
+const fs = require('fs');
+const path = require('path');
+
 const BASE = (process.env.DATACRAZY_API_URL || 'https://api.g1.datacrazy.io') + '/api/v1';
 const TOKEN = process.env.DATACRAZY_API_KEY;
 const { lerLista: lerSdrsCadastrados } = require('./sdrs.js');
+
+// Cache por dia, em arquivo — dia fechado (ontem pra tras) nao muda mais,
+// entao busca uma vez so e guarda pra sempre. So o dia de hoje e buscado
+// fresco a cada chamada. Isso evita reprocessar o historico inteiro toda
+// vez que alguem troca o filtro (7 dias, 30 dias, mes, intervalo...).
+// Aviso: arquivo local — funciona rodando com server.js. Se publicar como
+// funcao serverless na Vercel, o disco e temporario (mesma ressalva do
+// data/sdrs.json) — nesse caso trocar por um banco/KV.
+const DIR_CACHE_DIAS = path.join(__dirname, '..', 'data', 'leads-dia');
+
+function chaveDia(d) {
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+function caminhoDoDia(chave) { return path.join(DIR_CACHE_DIAS, `${chave}.json`); }
+
+function lerCacheDoDia(chave) {
+  try { return JSON.parse(fs.readFileSync(caminhoDoDia(chave), 'utf8')); }
+  catch { return null; }
+}
+function salvarCacheDoDia(chave, leads) {
+  fs.mkdirSync(DIR_CACHE_DIAS, { recursive: true });
+  fs.writeFileSync(caminhoDoDia(chave), JSON.stringify(leads));
+}
 
 const RANK = {
   'ig-outbound': 1,
@@ -44,7 +73,7 @@ function comFila(tarefa) {
 
 // --- cache simples na memória do servidor ---
 const CACHE = new Map();            // periodo -> { data, ts }
-const TTL = 60 * 1000;                // 1 min "fresco"
+const TTL = 3 * 60 * 1000;            // 3 min "fresco"
 const TTL_RESERVA = 30 * 60 * 1000;  // até 30 min como reserva em caso de erro
 
 function nomesDasTags(tags) {
@@ -86,21 +115,21 @@ function faixaDeData(query) {
   const dias = parseInt(periodo, 10);
   if (!isNaN(dias)) {
     const d = new Date(agora); d.setDate(d.getDate() - dias);
-    return { inicio: d, fim: null };
+    return { inicio: inicioDoDia(d), fim: null }; // dia cheio, pra bater com o cache diario
   }
   return { inicio: null, fim: null };
 }
 
-// Faz a chamada e, se levar 429, espera um pouco e tenta de novo.
+// Faz a chamada e, se levar 429, espera o tempo que o Datacrazy pedir (Retry-After)
+// e tenta de novo, em vez de desistir rápido — prefere demorar a devolver parcial.
 async function buscarComPaciencia(url, opts) {
-  const esperas = [3000, 6000]; // tenta 3 vezes no total, com mais paciencia
-  for (let i = 0; i <= esperas.length; i++) {
+  const maxTentativas = 8; // paciencia total de uns 2 minutos por pagina
+  for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
     const resp = await fetch(url, opts);
     if (resp.status !== 429) return resp;
-    if (i === esperas.length) return resp; // esgotou as tentativas: devolve o 429
-    let espera = esperas[i];
+    if (tentativa === maxTentativas - 1) return resp; // esgotou as tentativas: devolve o 429
     const ra = parseInt(resp.headers.get('retry-after') || '', 10);
-    if (!isNaN(ra)) espera = Math.min(ra * 1000, 8000); // respeita, mas no máx 8s
+    const espera = !isNaN(ra) ? ra * 1000 : 3000 * (tentativa + 1);
     await sleep(espera);
   }
 }
@@ -115,7 +144,7 @@ function paramsDeFiltro(faixa) {
   return params.toString();
 }
 
-async function buscarTodosOsLeads(faixa) {
+async function buscarLeadsPaginado(faixa, rotulo) {
   const take = 200; // paginas maiores = menos requisicoes pra mesma quantidade de leads
   let skip = 0;
   const todos = [];
@@ -139,7 +168,7 @@ async function buscarTodosOsLeads(faixa) {
       // agora (parcial) em vez de jogar tudo fora — melhor mostrar dado
       // incompleto avisado do que travar tudo por causa do limite externo.
       if (todos.length > 0) {
-        console.error(`[api/dados] rate limit no meio da busca — devolvendo parcial (${todos.length} leads de ${pagina} pagina(s))`);
+        console.error(`[api/dados] rate limit no meio da busca (${rotulo}) — devolvendo parcial (${todos.length} leads de ${pagina} pagina(s))`);
         return { leads: todos, parcial: true };
       }
       const err = new Error('O Datacrazy esta limitando as requisicoes (limite de 120/min). Tente atualizar em 1 minuto. Se o sistema antigo ainda estiver publicado, pause o cron dele.');
@@ -154,13 +183,141 @@ async function buscarTodosOsLeads(faixa) {
     const corpo = await resp.json();
     const pagina_leads = Array.isArray(corpo) ? corpo : (corpo.data || corpo.leads || []);
     todos.push(...pagina_leads);
-    console.log(`[api/dados] pagina ${pagina + 1}: ${pagina_leads.length} leads (skip=${skip}, total ate agora=${todos.length})`);
+    console.log(`[api/dados] ${rotulo} pagina ${pagina + 1}: ${pagina_leads.length} leads (skip=${skip}, total ate agora=${todos.length})`);
     if (pagina_leads.length < take) break;
     skip += take;
-    await sleep(3000); // pausa maior entre paginas, poupa cota da conta
+    await sleep(5000); // pausa maior entre paginas, poupa cota da conta
   }
-  console.log(`[api/dados] busca concluida: ${todos.length} leads no total`);
   return { leads: todos, parcial: false };
+}
+
+function listarDiasDaFaixa(faixa) {
+  const hoje = inicioDoDia(new Date());
+  const inicio = inicioDoDia(faixa.inicio);
+  const fim = faixa.fim ? inicioDoDia(faixa.fim) : hoje;
+  const dias = [];
+  const cursor = new Date(Math.min(inicio, fim));
+  const limite = new Date(Math.min(fim, hoje)); // nunca busca dia futuro
+  while (cursor <= limite) {
+    dias.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dias;
+}
+
+// Progresso da busca em andamento (uma so por vez, por causa da fila) —
+// front-end consulta isso pra mostrar barra de "calculando" em vez de
+// travar numa tela vazia ou mostrar dado inventado.
+let progressoAtual = null;
+function obterProgresso() { return progressoAtual; }
+
+// Busca dia por dia em vez do periodo inteiro de uma vez. Dia fechado
+// (ontem pra tras) usa cache em arquivo e nao bate no Datacrazy de novo;
+// so o dia de hoje e sempre buscado fresco. Isso faz trocar de filtro
+// (7 dias, 30 dias, mes...) ser rapido depois da primeira vez.
+async function buscarPorDiasComCache(faixa) {
+  if (!faixa || !faixa.inicio) return buscarLeadsPaginado(faixa, 'sem-filtro');
+
+  const hoje = inicioDoDia(new Date());
+  const chaveHoje = chaveDia(hoje);
+  const dias = listarDiasDaFaixa(faixa);
+  const todos = [];
+  let parcial = false;
+  progressoAtual = { feito: 0, total: dias.length };
+
+  try {
+    for (const dia of dias) {
+      const chave = chaveDia(dia);
+      const ehHoje = chave === chaveHoje;
+
+      if (!ehHoje) {
+        const emCache = lerCacheDoDia(chave);
+        if (emCache) { todos.push(...emCache); progressoAtual.feito++; continue; }
+      }
+
+      try {
+        const r = await buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave);
+        todos.push(...r.leads);
+        if (r.parcial) parcial = true;
+        else if (!ehHoje) salvarCacheDoDia(chave, r.leads); // so grava cache de dia fechado e busca completa
+        progressoAtual.feito++;
+        if (dias.length > 1) await sleep(1500); // pausa curta entre dias
+      } catch (e) {
+        if (todos.length > 0) { parcial = true; break; }
+        throw e;
+      }
+    }
+  } finally {
+    progressoAtual = null;
+  }
+  console.log(`[api/dados] busca concluida: ${todos.length} leads no total (${dias.length} dia(s), ${parcial ? 'parcial' : 'completa'})`);
+  return { leads: todos, parcial };
+}
+
+const DIAS_RETENCAO = 60; // guarda historico dos ultimos 60 dias, o resto e limpo
+
+// Roda de madrugada (ou quando o servidor sobe): busca e salva o cache de
+// todo dia fechado que ainda estiver faltando (nao so ontem — cobre o caso
+// do servidor ter ficado desligado alguns dias). Assim quem abrir o
+// dashboard de manha ja acha os numeros prontos, sem esperar calcular.
+async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
+  if (!TOKEN) return;
+  const hoje = inicioDoDia(new Date());
+  for (let i = diasParaTras; i >= 1; i--) {
+    const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
+    const chave = chaveDia(dia);
+    if (lerCacheDoDia(chave)) continue; // ja tem, nada a fazer
+
+    try {
+      const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave));
+      if (!r.parcial) {
+        salvarCacheDoDia(chave, r.leads);
+        console.log(`[api/dados] cache do dia ${chave} aquecido: ${r.leads.length} leads`);
+      }
+    } catch (e) {
+      console.error(`[api/dados] falha ao aquecer cache do dia ${chave}:`, (e && e.message) || e);
+    }
+    await sleep(1500); // pausa curta entre dias
+  }
+}
+
+// Apaga cache de dia mais velho que DIAS_RETENCAO — mantem so o historico
+// recente, sem deixar o disco crescer pra sempre.
+function limparDiasAntigos() {
+  const limite = inicioDoDia(new Date());
+  limite.setDate(limite.getDate() - DIAS_RETENCAO);
+  let arquivos;
+  try { arquivos = fs.readdirSync(DIR_CACHE_DIAS); } catch { return; }
+  for (const nome of arquivos) {
+    const chave = nome.replace(/\.json$/, '');
+    const data = new Date(chave + 'T00:00:00');
+    if (isNaN(data)) continue;
+    if (data < limite) {
+      fs.unlinkSync(caminhoDoDia(chave));
+      console.log(`[api/dados] cache do dia ${chave} removido (mais velho que ${DIAS_RETENCAO} dias)`);
+    }
+  }
+}
+
+// Calcula quanto tempo falta ate o proximo horario HH:MM (hora local).
+function msAteProximoHorario(hora, minuto) {
+  const agora = new Date();
+  const proximo = new Date(agora);
+  proximo.setHours(hora, minuto, 0, 0);
+  if (proximo <= agora) proximo.setDate(proximo.getDate() + 1);
+  return proximo - agora;
+}
+
+// Agenda o aquecimento pra rodar todo dia de madrugada (antes da operacao
+// comecar), alem de uma vez no boot pra cobrir o servidor tendo acabado
+// de subir.
+function agendarAquecimentoDiario(hora = 5, minuto = 0) {
+  const rodar = () => { limparDiasAntigos(); aquecerDiasFechados(); };
+  rodar(); // cobre o boot
+  setTimeout(function agendarProxima() {
+    rodar();
+    setInterval(rodar, 24 * 60 * 60 * 1000);
+  }, msAteProximoHorario(hora, minuto));
 }
 
 function agregar(leads, faixa) {
@@ -234,7 +391,7 @@ module.exports = async (req, res) => {
       }
 
       const faixa = faixaDeData(query);
-      const busca = await comFila(() => buscarTodosOsLeads(faixa));
+      const busca = await comFila(() => buscarPorDiasComCache(faixa));
       const resultado = agregar(busca.leads, faixa);
       CACHE.set(chaveCache, { data: resultado, ts: Date.now(), parcial: busca.parcial });
       res.setHeader('Cache-Control', 'no-store');
@@ -255,3 +412,11 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: String((e && e.message) || e) });
   }
 };
+
+module.exports.agendarAquecimentoDiario = agendarAquecimentoDiario;
+
+// Chamado pelo api/sdrs.js quando o cadastro de SDR muda — descarta so a
+// resposta ja pronta (o historico bruto por dia continua intacto), pra
+// proxima consulta recalcular com a lista nova em vez de esperar o TTL.
+module.exports.limparCacheResposta = () => CACHE.clear();
+module.exports.obterProgresso = obterProgresso;

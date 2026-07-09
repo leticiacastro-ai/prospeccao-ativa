@@ -99,6 +99,11 @@
   .aba-btn[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s3);}
   .aviso{display:none;background:#FEF3F2;border:1px solid #FEcDCA;color:#9A2A20;font-size:12.5px;padding:10px 14px;border-radius:10px;margin-bottom:18px;}
   .aviso.show{display:block;}
+  .progresso-wrap{display:none;align-items:center;gap:9px;margin-top:9px;}
+  .progresso-wrap.show{display:flex;}
+  .progresso-trilho{width:160px;height:6px;background:#EEF0F3;border-radius:999px;overflow:hidden;}
+  .progresso-barra{height:100%;width:0%;background:var(--s3);border-radius:999px;transition:width .4s ease;}
+  .progresso-texto{font-size:11.5px;color:var(--muted);}
   .foot-note{color:var(--faint);font-size:12px;margin-top:26px;text-align:center;}
   .empty{color:var(--muted);text-align:center;padding:30px 0;font-size:13.5px;}
 
@@ -118,6 +123,10 @@
       <h1>Prospecção Ativa</h1>
       <p>Funil macro do outbound no Instagram — do lead prospectado até virar cliente.</p>
       <span class="badge exemplo" id="statusBadge">Carregando…</span>
+      <div class="progresso-wrap" id="progressoWrap">
+        <div class="progresso-trilho"><div class="progresso-barra" id="barraProgresso"></div></div>
+        <span class="progresso-texto" id="textoProgresso">Calculando…</span>
+      </div>
     </div>
     <div class="controls">
       <div class="dropdown" id="periodoDropdown">
@@ -203,22 +212,44 @@
 <script>
 /* ============================================================
    FONTE DE DADOS
-   Tenta buscar os dados reais em /api/dados (o servidor que fala
-   com o Datacrazy). Se não conseguir — por exemplo, ao abrir o
-   arquivo antes de publicar — cai automaticamente nos dados de
-   exemplo, só pra você ver a tela funcionando.
+   Busca os dados reais em /api/dados (o servidor que fala com o
+   Datacrazy). Enquanto o histórico ainda não foi calculado (ou
+   deu erro), fica com a tela zerada mostrando "calculando" com
+   barra de progresso — nunca mostra dado inventado.
    ============================================================ */
-const DADOS_EXEMPLO = [
-  { sdr:"Carla Mendes",   cor:"#4A79B0", prospectou:350, respondeu:95, agendou:41, compareceu:30, cliente:14 },
-  { sdr:"Ana Ribeiro",    cor:"#2A9E8C", prospectou:320, respondeu:78, agendou:34, compareceu:22, cliente:9  },
-  { sdr:"Fernanda Lima",  cor:"#E4A028", prospectou:300, respondeu:84, agendou:38, compareceu:26, cliente:11 },
-  { sdr:"Bruno Costa",    cor:"#B4749B", prospectou:280, respondeu:61, agendou:25, compareceu:15, cliente:5  },
-  { sdr:"Diego Alves",    cor:"#C7623E", prospectou:210, respondeu:38, agendou:14, compareceu:8,  cliente:2  },
-];
-
-let usandoExemplo = false;
+let calculando = false;
 let mensagemErro = '';
 let dadosParciais = false;
+let pollProgresso = null;
+
+async function consultarProgresso(){
+  try{
+    const r = await fetch('/api/progresso');
+    const j = await r.json();
+    const barra = document.getElementById('barraProgresso');
+    const texto = document.getElementById('textoProgresso');
+    if(j.ativo && j.total > 0){
+      const pct = Math.round((j.feito/j.total)*100);
+      barra.style.width = pct + '%';
+      texto.textContent = `Calculando histórico… ${j.feito}/${j.total} dia(s) (${pct}%)`;
+    }else{
+      texto.textContent = 'Calculando…';
+    }
+  }catch(e){ /* ignora falha de poll, so nao atualiza a barra dessa vez */ }
+}
+
+function iniciarPollProgresso(){
+  calculando = true;
+  document.getElementById('progressoWrap').classList.add('show');
+  document.getElementById('barraProgresso').style.width = '0%';
+  consultarProgresso();
+  pollProgresso = setInterval(consultarProgresso, 1500);
+}
+function pararPollProgresso(){
+  calculando = false;
+  clearInterval(pollProgresso);
+  document.getElementById('progressoWrap').classList.remove('show');
+}
 
 function montarQueryPeriodo(){
   const periodo = document.getElementById('periodo').value;
@@ -243,27 +274,26 @@ function atualizarVisibilidadeCampos(){
 
 async function carregarDados(params){
   const controle = new AbortController();
-  const tempoLimite = setTimeout(()=>controle.abort(), 25000); // nao trava pra sempre se o Datacrazy estiver lento/limitando
+  const tempoLimite = setTimeout(()=>controle.abort(), 180000); // da tempo do backend esperar o Datacrazy liberar (retry-after) em vez de abortar cedo
+  iniciarPollProgresso();
   try{
     const r = await fetch('/api/dados?' + params.toString(), { signal: controle.signal });
     const j = await r.json();
     if(!r.ok) throw new Error(j && j.error ? j.error : ('erro ' + r.status));
     if(!Array.isArray(j)) throw new Error('resposta inesperada do servidor');
-    usandoExemplo = false; mensagemErro = '';
+    mensagemErro = '';
     dadosParciais = r.headers.get('X-Dados-Parcial') === 'true';
     return j;
   }catch(e){
-    usandoExemplo = true;
     dadosParciais = false;
     const abortou = e && e.name === 'AbortError';
-    // só mostramos o aviso de erro se NÃO for o caso normal de abrir sem servidor
     mensagemErro = abortou
-      ? 'demorou demais pra responder (provavelmente o Datacrazy limitando as requisicoes)'
-      : (String(e).includes('Failed to fetch') || String(e).includes('NetworkError'))
-        ? '' : String(e.message || e);
-    return DADOS_EXEMPLO;
+      ? 'demorou demais pra responder (provavelmente o Datacrazy limitando as requisicoes). Tentando de novo em instantes.'
+      : String(e.message || e);
+    return []; // zerado — nunca mostra dado inventado
   }finally{
     clearTimeout(tempoLimite);
+    pararPollProgresso();
   }
 }
 
@@ -291,16 +321,16 @@ let ordenacao = { col:'cliente', dir:'desc' };
 function renderStatus(){
   const b = document.getElementById('statusBadge');
   const av = document.getElementById('aviso');
-  if(usandoExemplo){
-    b.className = 'badge exemplo'; b.textContent = 'Dados de exemplo';
-  }else if(dadosParciais){
+  if(dadosParciais){
     const hora = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     b.className = 'badge exemplo'; b.textContent = 'Dados parciais · ' + hora;
+  }else if(mensagemErro){
+    b.className = 'badge exemplo'; b.textContent = 'Sem dados no momento';
   }else{
     const hora = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     b.className = 'badge aovivo'; b.textContent = 'Ao vivo · atualizado às ' + hora;
   }
-  if(mensagemErro){ av.textContent = 'Não deu pra buscar os dados reais: ' + mensagemErro + ' — mostrando dados de exemplo.'; av.classList.add('show'); }
+  if(mensagemErro){ av.textContent = 'Não deu pra buscar os dados: ' + mensagemErro; av.classList.add('show'); }
   else if(dadosParciais){ av.textContent = 'O Datacrazy limitou as requisições no meio da busca — os números abaixo são parciais (nem todos os leads do período foram contados ainda).'; av.classList.add('show'); }
   else { av.classList.remove('show'); }
 }
@@ -348,7 +378,9 @@ function renderTabela(){
   }).join('');
 
   if(dados.length===0){
-    document.getElementById('tbody').innerHTML = `<tr><td colspan="7" class="empty">Nenhum lead encontrado para este período.</td></tr>`;
+    const msg = mensagemErro ? 'Não deu pra carregar agora — tente atualizar em instantes.'
+      : 'Nenhum lead encontrado para este período.';
+    document.getElementById('tbody').innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
     document.getElementById('tfoot').innerHTML = '';
   }else{
     const linhas=[...dados].sort((a,b)=>{
@@ -389,6 +421,11 @@ async function atualizar(){
   if(periodo === 'data' && !document.getElementById('dataEspecifica').value) return;
   if(periodo === 'intervalo' && (!document.getElementById('dataInicio').value || !document.getElementById('dataFim').value)) return;
 
+  if(periodo === 'mes'){
+    periodoLabel.textContent = rotuloEsteMes();
+    if(liEsteMes) liEsteMes.textContent = rotuloEsteMes();
+  }
+
   const btn=document.getElementById('btnRefresh');
   btn.classList.add('spin');
   dados = await carregarDados(montarQueryPeriodo());
@@ -407,9 +444,20 @@ function fecharDropdown(){
   dropdown.classList.remove('open');
   dropdownBtn.setAttribute('aria-expanded','false');
 }
+function rotuloEsteMes(){
+  const hoje = new Date();
+  const dias = hoje.getDate(); // dia 1 ate hoje
+  const d1 = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  const dHoje = hoje.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  return `Este mês (${d1}–${dHoje}, ${dias} dia${dias>1?'s':''})`;
+}
+
+const liEsteMes = dropdownMenu.querySelector('li[data-value="mes"]');
+if(liEsteMes) liEsteMes.textContent = rotuloEsteMes();
+
 function selecionarPeriodo(valor, rotulo){
   periodoInput.value = valor;
-  periodoLabel.textContent = rotulo;
+  periodoLabel.textContent = valor === 'mes' ? rotuloEsteMes() : rotulo;
   dropdownMenu.querySelectorAll('li[role=option]').forEach(li=>{
     li.setAttribute('aria-selected', li.dataset.value===valor ? 'true' : 'false');
   });

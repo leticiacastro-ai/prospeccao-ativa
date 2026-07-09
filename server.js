@@ -7,6 +7,7 @@ const path = require('path');
 const url = require('url');
 const dados = require('./api/dados.js');
 const sdrs = require('./api/sdrs.js');
+const progresso = require('./api/progresso.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -42,6 +43,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (parsed.pathname === '/api/progresso') {
+    const resFake = {
+      status(codigo) { res.statusCode = codigo; return this; },
+      setHeader(k, v) { res.setHeader(k, v); },
+      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
+    };
+    await progresso({}, resFake);
+    return;
+  }
+
   if (parsed.pathname === '/api/sdrs') {
     const corpo = ['POST','PUT','DELETE'].includes(req.method) ? await lerCorpoJson(req) : {};
     const reqFake = { method: req.method, body: corpo };
@@ -66,6 +77,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Rodando em http://localhost:${PORT}`);
   if (!process.env.DATACRAZY_API_KEY) {
-    console.log('Aviso: DATACRAZY_API_KEY não definida — vai cair nos dados de exemplo.');
+    console.log('Aviso: DATACRAZY_API_KEY não definida — /api/dados vai responder com erro.');
   }
+  dados.agendarAquecimentoDiario(3, 0); // roda no boot e todo dia as 3h, antes da operacao comecar
 });

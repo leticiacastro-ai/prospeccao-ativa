@@ -29,6 +29,9 @@ function lerLista() {
 function salvarLista(lista) {
   fs.mkdirSync(path.dirname(ARQUIVO), { recursive: true });
   fs.writeFileSync(ARQUIVO, JSON.stringify(lista, null, 2));
+  // avisa o api/dados.js pra descartar a resposta ja pronta (nao o historico
+  // bruto) e recalcular com a lista de SDR atualizada na proxima consulta.
+  try { require('./dados.js').limparCacheResposta(); } catch {}
 }
 
 module.exports = async (req, res) => {
