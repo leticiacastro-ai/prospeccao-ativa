@@ -122,22 +122,22 @@
     <div class="controls">
       <div class="dropdown" id="periodoDropdown">
         <button type="button" class="dropdown-btn" id="periodoBtn" aria-haspopup="listbox" aria-expanded="false">
-          <span id="periodoLabel">Últimos 30 dias</span>
+          <span id="periodoLabel">Hoje</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
         </button>
         <ul class="dropdown-menu" id="periodoMenu" role="listbox" aria-label="Período" tabindex="-1">
-          <li role="option" data-value="hoje">Hoje</li>
+          <li role="option" data-value="hoje" aria-selected="true">Hoje</li>
           <li role="option" data-value="ontem">Ontem</li>
           <li role="option" data-value="7">Últimos 7 dias</li>
           <li role="option" data-value="14">Últimos 14 dias</li>
-          <li role="option" data-value="30" aria-selected="true">Últimos 30 dias</li>
+          <li role="option" data-value="30">Últimos 30 dias</li>
           <li role="option" data-value="mes">Este mês</li>
           <li class="dropdown-sep"></li>
           <li role="option" data-value="data">Data específica</li>
           <li role="option" data-value="intervalo">Intervalo de datas</li>
         </ul>
       </div>
-      <input type="hidden" id="periodo" value="30">
+      <input type="hidden" id="periodo" value="hoje">
       <input type="date" id="dataEspecifica" aria-label="Data específica" style="display:none">
       <input type="date" id="dataInicio" aria-label="Data início" style="display:none">
       <span id="separadorIntervalo" style="display:none;color:var(--muted);font-size:13px;">até</span>
