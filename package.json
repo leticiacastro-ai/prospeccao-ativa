@@ -8,6 +8,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "@vercel/kv": "^3.0.0"
   }
 }

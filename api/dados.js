@@ -11,37 +11,21 @@
 //  DATACRAZY_API_KEY (configurada na Vercel), nunca no navegador.
 // ============================================================
 
-const fs = require('fs');
-const path = require('path');
-
 const BASE = (process.env.DATACRAZY_API_URL || 'https://api.g1.datacrazy.io') + '/api/v1';
 const TOKEN = process.env.DATACRAZY_API_KEY;
 const { lerLista: lerSdrsCadastrados } = require('./sdrs.js');
+const armazenamento = require('./armazenamento.js');
 
-// Cache por dia, em arquivo — dia fechado (ontem pra tras) nao muda mais,
-// entao busca uma vez so e guarda pra sempre. So o dia de hoje e buscado
-// fresco a cada chamada. Isso evita reprocessar o historico inteiro toda
-// vez que alguem troca o filtro (7 dias, 30 dias, mes, intervalo...).
-// Aviso: arquivo local — funciona rodando com server.js. Se publicar como
-// funcao serverless na Vercel, o disco e temporario (mesma ressalva do
-// data/sdrs.json) — nesse caso trocar por um banco/KV.
-const DIR_CACHE_DIAS = path.join(__dirname, '..', 'data', 'leads-dia');
-
+// Cache por dia — dia fechado (ontem pra tras) nao muda mais, entao busca
+// uma vez so e guarda pra sempre. So o dia de hoje e buscado fresco a cada
+// chamada. Isso evita reprocessar o historico inteiro toda vez que alguem
+// troca o filtro (7 dias, 30 dias, mes, intervalo...). Onde isso e guardado
+// (arquivo local ou Vercel KV) fica em api/armazenamento.js.
 function chaveDia(d) {
   const ano = d.getFullYear();
   const mes = String(d.getMonth() + 1).padStart(2, '0');
   const dia = String(d.getDate()).padStart(2, '0');
   return `${ano}-${mes}-${dia}`;
-}
-function caminhoDoDia(chave) { return path.join(DIR_CACHE_DIAS, `${chave}.json`); }
-
-function lerCacheDoDia(chave) {
-  try { return JSON.parse(fs.readFileSync(caminhoDoDia(chave), 'utf8')); }
-  catch { return null; }
-}
-function salvarCacheDoDia(chave, leads) {
-  fs.mkdirSync(DIR_CACHE_DIAS, { recursive: true });
-  fs.writeFileSync(caminhoDoDia(chave), JSON.stringify(leads));
 }
 
 const RANK = {
@@ -231,7 +215,7 @@ async function buscarPorDiasComCache(faixa) {
       const ehHoje = chave === chaveHoje;
 
       if (!ehHoje) {
-        const emCache = lerCacheDoDia(chave);
+        const emCache = await armazenamento.lerDia(chave);
         if (emCache) { todos.push(...emCache); progressoAtual.feito++; continue; }
       }
 
@@ -239,7 +223,7 @@ async function buscarPorDiasComCache(faixa) {
         const r = await buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave);
         todos.push(...r.leads);
         if (r.parcial) parcial = true;
-        else if (!ehHoje) salvarCacheDoDia(chave, r.leads); // so grava cache de dia fechado e busca completa
+        else if (!ehHoje) await armazenamento.salvarDia(chave, r.leads); // so grava cache de dia fechado e busca completa
         progressoAtual.feito++;
         if (dias.length > 1) await sleep(1500); // pausa curta entre dias
       } catch (e) {
@@ -266,12 +250,12 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
   for (let i = diasParaTras; i >= 1; i--) {
     const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
     const chave = chaveDia(dia);
-    if (lerCacheDoDia(chave)) continue; // ja tem, nada a fazer
+    if (await armazenamento.lerDia(chave)) continue; // ja tem, nada a fazer
 
     try {
       const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave));
       if (!r.parcial) {
-        salvarCacheDoDia(chave, r.leads);
+        await armazenamento.salvarDia(chave, r.leads);
         console.log(`[api/dados] cache do dia ${chave} aquecido: ${r.leads.length} leads`);
       }
     } catch (e) {
@@ -282,18 +266,16 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
 }
 
 // Apaga cache de dia mais velho que DIAS_RETENCAO — mantem so o historico
-// recente, sem deixar o disco crescer pra sempre.
-function limparDiasAntigos() {
+// recente, sem deixar o armazenamento crescer pra sempre.
+async function limparDiasAntigos() {
   const limite = inicioDoDia(new Date());
   limite.setDate(limite.getDate() - DIAS_RETENCAO);
-  let arquivos;
-  try { arquivos = fs.readdirSync(DIR_CACHE_DIAS); } catch { return; }
-  for (const nome of arquivos) {
-    const chave = nome.replace(/\.json$/, '');
+  const chaves = await armazenamento.listarChaves();
+  for (const chave of chaves) {
     const data = new Date(chave + 'T00:00:00');
     if (isNaN(data)) continue;
     if (data < limite) {
-      fs.unlinkSync(caminhoDoDia(chave));
+      await armazenamento.apagarDia(chave);
       console.log(`[api/dados] cache do dia ${chave} removido (mais velho que ${DIAS_RETENCAO} dias)`);
     }
   }
@@ -308,11 +290,20 @@ function msAteProximoHorario(hora, minuto) {
   return proximo - agora;
 }
 
+// Uma rodada de manutencao: limpa o que passou dos 60 dias e busca o que
+// tiver faltando. Usado tanto pelo agendamento local (server.js) quanto
+// pelo Vercel Cron em producao (api/cron-aquecer.js).
+async function rodarManutencaoDoCache() {
+  await limparDiasAntigos().catch(() => {});
+  await aquecerDiasFechados().catch(() => {});
+}
+
 // Agenda o aquecimento pra rodar todo dia de madrugada (antes da operacao
 // comecar), alem de uma vez no boot pra cobrir o servidor tendo acabado
-// de subir.
+// de subir. So funciona rodando com server.js (processo continuo) — na
+// Vercel isso e feito pelo Cron configurado em vercel.json.
 function agendarAquecimentoDiario(hora = 5, minuto = 0) {
-  const rodar = () => { limparDiasAntigos(); aquecerDiasFechados(); };
+  const rodar = rodarManutencaoDoCache;
   rodar(); // cobre o boot
   setTimeout(function agendarProxima() {
     rodar();
@@ -414,6 +405,7 @@ module.exports = async (req, res) => {
 };
 
 module.exports.agendarAquecimentoDiario = agendarAquecimentoDiario;
+module.exports.rodarManutencaoDoCache = rodarManutencaoDoCache;
 
 // Chamado pelo api/sdrs.js quando o cadastro de SDR muda — descarta so a
 // resposta ja pronta (o historico bruto por dia continua intacto), pra
