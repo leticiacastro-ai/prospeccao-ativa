@@ -27,8 +27,21 @@
   .badge.aovivo{background:#E9F7EF;color:#116B3D;border:1px solid #C4E9D3;}
   .badge.aovivo::before{background:#1C8A54;}
   .controls{display:flex;align-items:center;gap:10px;}
-  select,button{font-family:inherit;font-size:13.5px;}
-  select{appearance:none;background:var(--card);border:1px solid var(--line);color:var(--ink);padding:9px 34px 9px 13px;border-radius:10px;cursor:pointer;font-weight:500;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;}
+  button,input[type=date]{font-family:inherit;font-size:13.5px;}
+  input[type=date]{background:var(--card);border:1px solid var(--line);color:var(--ink);padding:8px 12px;border-radius:10px;font-weight:500;}
+
+  .dropdown{position:relative;}
+  .dropdown-btn{display:inline-flex;align-items:center;gap:10px;justify-content:space-between;min-width:172px;font-family:inherit;font-size:13.5px;background:var(--card);border:1px solid var(--line);color:var(--ink);padding:9px 13px;border-radius:10px;cursor:pointer;font-weight:500;}
+  .dropdown-btn:hover{border-color:#D7DBE1;}
+  .dropdown-btn svg{color:var(--muted);flex-shrink:0;transition:transform .15s ease;}
+  .dropdown.open .dropdown-btn svg{transform:rotate(180deg);}
+  .dropdown.open .dropdown-btn{border-color:var(--s3);}
+  .dropdown-menu{list-style:none;margin:6px 0 0;padding:6px;position:absolute;top:100%;left:0;min-width:100%;width:max-content;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 4px 10px rgba(18,22,31,.06),0 12px 32px rgba(18,22,31,.10);z-index:20;display:none;}
+  .dropdown.open .dropdown-menu{display:block;}
+  .dropdown-menu li[role=option]{padding:9px 12px;border-radius:8px;font-size:13.5px;font-weight:500;color:var(--ink);cursor:pointer;white-space:nowrap;}
+  .dropdown-menu li[role=option]:hover{background:#F1F3F6;}
+  .dropdown-menu li[role=option][aria-selected="true"]{background:#EAF0FA;color:var(--s3);font-weight:600;}
+  .dropdown-sep{height:1px;background:var(--line);margin:6px 4px;}
   button.refresh{display:inline-flex;align-items:center;gap:7px;background:var(--ink);color:#fff;border:none;padding:9px 15px;border-radius:10px;cursor:pointer;font-weight:600;transition:transform .12s ease,opacity .12s ease;}
   button.refresh:hover{opacity:.92;} button.refresh:active{transform:translateY(1px);}
   button.refresh svg{transition:transform .5s ease;} button.refresh.spin svg{transform:rotate(360deg);}
@@ -81,6 +94,9 @@
   tfoot td{border-top:2px solid var(--line);font-weight:700;color:var(--ink);padding-top:13px;}
   tfoot td:first-child{font-family:'Inter';}
 
+  .abas{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--line);}
+  .aba-btn{font-family:inherit;background:none;border:none;padding:10px 4px;margin-right:14px;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;}
+  .aba-btn[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--s3);}
   .aviso{display:none;background:#FEF3F2;border:1px solid #FEcDCA;color:#9A2A20;font-size:12.5px;padding:10px 14px;border-radius:10px;margin-bottom:18px;}
   .aviso.show{display:block;}
   .foot-note{color:var(--faint);font-size:12px;margin-top:26px;text-align:center;}
@@ -104,12 +120,28 @@
       <span class="badge exemplo" id="statusBadge">Carregando…</span>
     </div>
     <div class="controls">
-      <select id="periodo" aria-label="Período">
-        <option value="7">Últimos 7 dias</option>
-        <option value="14">Últimos 14 dias</option>
-        <option value="30" selected>Últimos 30 dias</option>
-        <option value="mes">Este mês</option>
-      </select>
+      <div class="dropdown" id="periodoDropdown">
+        <button type="button" class="dropdown-btn" id="periodoBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span id="periodoLabel">Últimos 30 dias</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <ul class="dropdown-menu" id="periodoMenu" role="listbox" aria-label="Período" tabindex="-1">
+          <li role="option" data-value="hoje">Hoje</li>
+          <li role="option" data-value="ontem">Ontem</li>
+          <li role="option" data-value="7">Últimos 7 dias</li>
+          <li role="option" data-value="14">Últimos 14 dias</li>
+          <li role="option" data-value="30" aria-selected="true">Últimos 30 dias</li>
+          <li role="option" data-value="mes">Este mês</li>
+          <li class="dropdown-sep"></li>
+          <li role="option" data-value="data">Data específica</li>
+          <li role="option" data-value="intervalo">Intervalo de datas</li>
+        </ul>
+      </div>
+      <input type="hidden" id="periodo" value="30">
+      <input type="date" id="dataEspecifica" aria-label="Data específica" style="display:none">
+      <input type="date" id="dataInicio" aria-label="Data início" style="display:none">
+      <span id="separadorIntervalo" style="display:none;color:var(--muted);font-size:13px;">até</span>
+      <input type="date" id="dataFim" aria-label="Data fim" style="display:none">
       <button class="refresh" id="btnRefresh" aria-label="Atualizar dados">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         Atualizar
@@ -117,33 +149,55 @@
     </div>
   </div>
 
-  <div class="aviso" id="aviso"></div>
-
-  <div class="summary" id="summary"></div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <h2>Funil macro</h2>
-      <div class="legend"><span>Frio</span><span class="bar"></span><span>Cliente</span></div>
-    </div>
-    <div class="funnel" id="funnel"></div>
+  <div class="abas">
+    <button type="button" class="aba-btn" id="abaBtnDashboard" aria-selected="true">Dashboard</button>
+    <button type="button" class="aba-btn" id="abaBtnSdrs" aria-selected="false">Cadastro de SDR</button>
   </div>
 
-  <div class="panel">
-    <div class="panel-head">
-      <h2>Desempenho por SDR</h2>
-      <div class="hint">Toque num título de coluna para ordenar</div>
+  <div id="abaDashboard">
+    <div class="aviso" id="aviso"></div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Funil macro</h2>
+        <div class="legend"><span>Frio</span><span class="bar"></span><span>Cliente</span></div>
+      </div>
+      <div class="funnel" id="funnel"></div>
     </div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr id="thead"></tr></thead>
-        <tbody id="tbody"></tbody>
-        <tfoot id="tfoot"></tfoot>
-      </table>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Desempenho por SDR</h2>
+        <div class="hint">Toque num título de coluna para ordenar</div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr id="thead"></tr></thead>
+          <tbody id="tbody"></tbody>
+          <tfoot id="tfoot"></tfoot>
+        </table>
+      </div>
     </div>
+
+    <p class="foot-note">Considera apenas leads <b>ig-outbound</b> com SDR atribuído <b>e cadastrado na aba "Cadastro de SDR"</b>. Outras origens (inbound, tráfego pago, formulário) e nomes não cadastrados ficam de fora.</p>
   </div>
 
-  <p class="foot-note">Considera apenas leads <b>ig-outbound</b> com SDR atribuído. Outras origens (inbound, tráfego pago, formulário) ficam de fora.</p>
+  <div id="abaSdrs" style="display:none">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Cadastro de SDR</h2>
+        <div class="hint">Só quem estiver aqui é contado no dashboard</div>
+      </div>
+      <div style="padding:16px 20px;display:flex;gap:8px;">
+        <input type="text" id="inputNovoSdr" placeholder="Nome exato do atendente no CRM" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;">
+        <button class="refresh" id="btnAddSdr">Adicionar</button>
+      </div>
+      <div class="aviso" id="avisoSdrs"></div>
+      <ul id="listaSdrs" style="list-style:none;margin:0;padding:0 20px 20px;"></ul>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -164,21 +218,52 @@ const DADOS_EXEMPLO = [
 
 let usandoExemplo = false;
 let mensagemErro = '';
+let dadosParciais = false;
 
-async function carregarDados(periodo){
+function montarQueryPeriodo(){
+  const periodo = document.getElementById('periodo').value;
+  const params = new URLSearchParams({ periodo });
+  if(periodo === 'data'){
+    params.set('data', document.getElementById('dataEspecifica').value);
+  }else if(periodo === 'intervalo'){
+    params.set('inicio', document.getElementById('dataInicio').value);
+    params.set('fim', document.getElementById('dataFim').value);
+  }
+  return params;
+}
+
+function atualizarVisibilidadeCampos(){
+  const periodo = document.getElementById('periodo').value;
+  document.getElementById('dataEspecifica').style.display = periodo === 'data' ? '' : 'none';
+  const ehIntervalo = periodo === 'intervalo';
+  document.getElementById('dataInicio').style.display = ehIntervalo ? '' : 'none';
+  document.getElementById('separadorIntervalo').style.display = ehIntervalo ? '' : 'none';
+  document.getElementById('dataFim').style.display = ehIntervalo ? '' : 'none';
+}
+
+async function carregarDados(params){
+  const controle = new AbortController();
+  const tempoLimite = setTimeout(()=>controle.abort(), 25000); // nao trava pra sempre se o Datacrazy estiver lento/limitando
   try{
-    const r = await fetch('/api/dados?periodo=' + encodeURIComponent(periodo));
+    const r = await fetch('/api/dados?' + params.toString(), { signal: controle.signal });
     const j = await r.json();
     if(!r.ok) throw new Error(j && j.error ? j.error : ('erro ' + r.status));
     if(!Array.isArray(j)) throw new Error('resposta inesperada do servidor');
     usandoExemplo = false; mensagemErro = '';
+    dadosParciais = r.headers.get('X-Dados-Parcial') === 'true';
     return j;
   }catch(e){
     usandoExemplo = true;
+    dadosParciais = false;
+    const abortou = e && e.name === 'AbortError';
     // só mostramos o aviso de erro se NÃO for o caso normal de abrir sem servidor
-    mensagemErro = (String(e).includes('Failed to fetch') || String(e).includes('NetworkError'))
-      ? '' : String(e.message || e);
+    mensagemErro = abortou
+      ? 'demorou demais pra responder (provavelmente o Datacrazy limitando as requisicoes)'
+      : (String(e).includes('Failed to fetch') || String(e).includes('NetworkError'))
+        ? '' : String(e.message || e);
     return DADOS_EXEMPLO;
+  }finally{
+    clearTimeout(tempoLimite);
   }
 }
 
@@ -208,11 +293,15 @@ function renderStatus(){
   const av = document.getElementById('aviso');
   if(usandoExemplo){
     b.className = 'badge exemplo'; b.textContent = 'Dados de exemplo';
+  }else if(dadosParciais){
+    const hora = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    b.className = 'badge exemplo'; b.textContent = 'Dados parciais · ' + hora;
   }else{
     const hora = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     b.className = 'badge aovivo'; b.textContent = 'Ao vivo · atualizado às ' + hora;
   }
   if(mensagemErro){ av.textContent = 'Não deu pra buscar os dados reais: ' + mensagemErro + ' — mostrando dados de exemplo.'; av.classList.add('show'); }
+  else if(dadosParciais){ av.textContent = 'O Datacrazy limitou as requisições no meio da busca — os números abaixo são parciais (nem todos os leads do período foram contados ainda).'; av.classList.add('show'); }
   else { av.classList.remove('show'); }
 }
 
@@ -296,16 +385,176 @@ function renderTabela(){
 }
 
 async function atualizar(){
+  const periodo = document.getElementById('periodo').value;
+  if(periodo === 'data' && !document.getElementById('dataEspecifica').value) return;
+  if(periodo === 'intervalo' && (!document.getElementById('dataInicio').value || !document.getElementById('dataFim').value)) return;
+
   const btn=document.getElementById('btnRefresh');
   btn.classList.add('spin');
-  dados = await carregarDados(document.getElementById('periodo').value);
+  dados = await carregarDados(montarQueryPeriodo());
   renderStatus(); renderResumo(); renderFunil(); renderTabela();
   setTimeout(()=>btn.classList.remove('spin'),500);
 }
 
+/* ---------- dropdown de período ---------- */
+const dropdown = document.getElementById('periodoDropdown');
+const dropdownBtn = document.getElementById('periodoBtn');
+const dropdownMenu = document.getElementById('periodoMenu');
+const periodoInput = document.getElementById('periodo');
+const periodoLabel = document.getElementById('periodoLabel');
+
+function fecharDropdown(){
+  dropdown.classList.remove('open');
+  dropdownBtn.setAttribute('aria-expanded','false');
+}
+function selecionarPeriodo(valor, rotulo){
+  periodoInput.value = valor;
+  periodoLabel.textContent = rotulo;
+  dropdownMenu.querySelectorAll('li[role=option]').forEach(li=>{
+    li.setAttribute('aria-selected', li.dataset.value===valor ? 'true' : 'false');
+  });
+  fecharDropdown();
+  atualizarVisibilidadeCampos();
+  atualizar();
+}
+
+dropdownBtn.addEventListener('click',()=>{
+  const abrindo = !dropdown.classList.contains('open');
+  dropdown.classList.toggle('open', abrindo);
+  dropdownBtn.setAttribute('aria-expanded', String(abrindo));
+});
+dropdownMenu.querySelectorAll('li[role=option]').forEach(li=>{
+  li.addEventListener('click', ()=> selecionarPeriodo(li.dataset.value, li.textContent));
+});
+document.addEventListener('click', (e)=>{ if(!dropdown.contains(e.target)) fecharDropdown(); });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') fecharDropdown(); });
+
 document.getElementById('btnRefresh').addEventListener('click',atualizar);
-document.getElementById('periodo').addEventListener('change',atualizar);
+document.getElementById('dataEspecifica').addEventListener('change',atualizar);
+document.getElementById('dataInicio').addEventListener('change',atualizar);
+document.getElementById('dataFim').addEventListener('change',atualizar);
+atualizarVisibilidadeCampos();
 atualizar();
+setInterval(atualizar, 60 * 1000); // atualiza sozinho a cada 1 min
+
+/* ---------- abas ---------- */
+const abaBtnDashboard = document.getElementById('abaBtnDashboard');
+const abaBtnSdrs = document.getElementById('abaBtnSdrs');
+const abaDashboard = document.getElementById('abaDashboard');
+const abaSdrs = document.getElementById('abaSdrs');
+
+abaBtnDashboard.addEventListener('click', ()=>{
+  abaDashboard.style.display=''; abaSdrs.style.display='none';
+  abaBtnDashboard.setAttribute('aria-selected','true'); abaBtnSdrs.setAttribute('aria-selected','false');
+});
+abaBtnSdrs.addEventListener('click', ()=>{
+  abaDashboard.style.display='none'; abaSdrs.style.display='';
+  abaBtnDashboard.setAttribute('aria-selected','false'); abaBtnSdrs.setAttribute('aria-selected','true');
+  carregarListaSdrs();
+});
+
+/* ---------- cadastro de SDR ---------- */
+const inputNovoSdr = document.getElementById('inputNovoSdr');
+const btnAddSdr = document.getElementById('btnAddSdr');
+const listaSdrs = document.getElementById('listaSdrs');
+const avisoSdrs = document.getElementById('avisoSdrs');
+
+function mostrarAvisoSdrs(msg, ehErro){
+  avisoSdrs.textContent = msg;
+  avisoSdrs.classList.toggle('show', !!msg);
+  avisoSdrs.style.background = ehErro ? '' : '#E9F7EF';
+  avisoSdrs.style.color = ehErro ? '' : '#116B3D';
+  avisoSdrs.style.borderColor = ehErro ? '' : '#C4E9D3';
+}
+
+function renderListaSdrs(nomes){
+  if(!nomes.length){
+    listaSdrs.innerHTML = '<li class="empty">Nenhum SDR cadastrado ainda — o dashboard não vai contar ninguém até cadastrar.</li>';
+    return;
+  }
+  listaSdrs.innerHTML = nomes.map(n => `
+    <li data-linha="${n}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px;gap:8px;">
+      <span class="txtNome" style="flex:1;">${n}</span>
+      <button type="button" data-nome="${n}" class="btnEditarSdr" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:12.5px;">Editar</button>
+      <button type="button" data-nome="${n}" class="btnRemoverSdr" style="border:none;background:none;color:#9A2A20;cursor:pointer;font-size:12.5px;">Remover</button>
+    </li>`).join('');
+  listaSdrs.querySelectorAll('.btnRemoverSdr').forEach(btn=>{
+    btn.addEventListener('click', ()=> removerSdr(btn.dataset.nome));
+  });
+  listaSdrs.querySelectorAll('.btnEditarSdr').forEach(btn=>{
+    btn.addEventListener('click', ()=> entrarModoEdicao(btn.dataset.nome));
+  });
+}
+
+function entrarModoEdicao(nomeAtual){
+  const li = listaSdrs.querySelector(`li[data-linha="${CSS.escape(nomeAtual)}"]`);
+  if(!li) return;
+  li.innerHTML = `
+    <input type="text" value="${nomeAtual}" class="inputEditarSdr" style="flex:1;padding:6px 9px;border:1px solid var(--line);border-radius:6px;font-size:13.5px;">
+    <button type="button" class="btnSalvarEdicao" style="border:none;background:none;color:var(--win);cursor:pointer;font-size:12.5px;">Salvar</button>
+    <button type="button" class="btnCancelarEdicao" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:12.5px;">Cancelar</button>`;
+  const input = li.querySelector('.inputEditarSdr');
+  input.focus(); input.select();
+  li.querySelector('.btnSalvarEdicao').addEventListener('click', ()=> salvarEdicaoSdr(nomeAtual, input.value.trim()));
+  li.querySelector('.btnCancelarEdicao').addEventListener('click', carregarListaSdrs);
+  input.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter') salvarEdicaoSdr(nomeAtual, input.value.trim());
+    if(e.key==='Escape') carregarListaSdrs();
+  });
+}
+
+async function salvarEdicaoSdr(nomeAntigo, nomeNovo){
+  if(!nomeNovo || nomeNovo===nomeAntigo) return carregarListaSdrs();
+  try{
+    const r = await fetch('/api/sdrs', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nomeAntigo, nomeNovo }) });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j && j.error ? j.error : 'erro ao editar');
+    mostrarAvisoSdrs('');
+    renderListaSdrs(j);
+  }catch(e){
+    mostrarAvisoSdrs('Não deu pra editar: ' + (e.message||e), true);
+  }
+}
+
+async function carregarListaSdrs(){
+  try{
+    const r = await fetch('/api/sdrs');
+    const j = await r.json();
+    if(!r.ok) throw new Error(j && j.error ? j.error : 'erro ao carregar');
+    renderListaSdrs(j);
+  }catch(e){
+    mostrarAvisoSdrs('Não deu pra carregar a lista: ' + (e.message||e), true);
+  }
+}
+
+async function adicionarSdr(){
+  const nome = inputNovoSdr.value.trim();
+  if(!nome) return;
+  try{
+    const r = await fetch('/api/sdrs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j && j.error ? j.error : 'erro ao adicionar');
+    inputNovoSdr.value='';
+    mostrarAvisoSdrs('');
+    renderListaSdrs(j);
+  }catch(e){
+    mostrarAvisoSdrs('Não deu pra adicionar: ' + (e.message||e), true);
+  }
+}
+
+async function removerSdr(nome){
+  try{
+    const r = await fetch('/api/sdrs', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nome }) });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j && j.error ? j.error : 'erro ao remover');
+    renderListaSdrs(j);
+  }catch(e){
+    mostrarAvisoSdrs('Não deu pra remover: ' + (e.message||e), true);
+  }
+}
+
+btnAddSdr.addEventListener('click', adicionarSdr);
+inputNovoSdr.addEventListener('keydown', (e)=>{ if(e.key==='Enter') adicionarSdr(); });
 </script>
 </body>
 </html>
