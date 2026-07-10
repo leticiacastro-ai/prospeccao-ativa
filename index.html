@@ -160,6 +160,7 @@
 
   <div class="abas">
     <button type="button" class="aba-btn" id="abaBtnDashboard" aria-selected="true">Dashboard</button>
+    <button type="button" class="aba-btn" id="abaBtnComparar" aria-selected="false">Comparar períodos</button>
     <button type="button" class="aba-btn" id="abaBtnSdrs" aria-selected="false">Cadastro de SDR</button>
   </div>
 
@@ -199,6 +200,43 @@
     </div>
 
     <p class="foot-note">Considera apenas leads <b>ig-outbound</b> com SDR atribuído <b>e cadastrado na aba "Cadastro de SDR"</b>. Outras origens (inbound, tráfego pago, formulário) e nomes não cadastrados ficam de fora.</p>
+  </div>
+
+  <div id="abaComparar" style="display:none">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Comparar dois períodos</h2>
+        <div class="hint">Escolha as datas de cada período e compare os totais</div>
+      </div>
+      <div style="padding:0 20px 20px;display:flex;gap:20px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:220px;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--s3);">Período A</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="date" id="compA_inicio" style="flex:1;">
+            <span style="color:var(--muted);font-size:13px;">até</span>
+            <input type="date" id="compA_fim" style="flex:1;">
+          </div>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--s5);">Período B</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="date" id="compB_inicio" style="flex:1;">
+            <span style="color:var(--muted);font-size:13px;">até</span>
+            <input type="date" id="compB_fim" style="flex:1;">
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 20px 20px;">
+        <button class="refresh" id="btnComparar">Comparar</button>
+      </div>
+      <div class="aviso" id="avisoComparar"></div>
+      <div class="tablewrap" id="wrapComparar" style="display:none;padding:0 20px 20px;">
+        <table>
+          <thead><tr><th style="text-align:left;">Métrica</th><th>Período A</th><th>Período B</th><th>Diferença</th></tr></thead>
+          <tbody id="tbodyComparar"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <div id="abaSdrs" style="display:none">
@@ -512,18 +550,76 @@ setInterval(atualizar, 60 * 1000); // atualiza sozinho a cada 1 min
 
 /* ---------- abas ---------- */
 const abaBtnDashboard = document.getElementById('abaBtnDashboard');
+const abaBtnComparar = document.getElementById('abaBtnComparar');
 const abaBtnSdrs = document.getElementById('abaBtnSdrs');
 const abaDashboard = document.getElementById('abaDashboard');
+const abaComparar = document.getElementById('abaComparar');
 const abaSdrs = document.getElementById('abaSdrs');
 
-abaBtnDashboard.addEventListener('click', ()=>{
-  abaDashboard.style.display=''; abaSdrs.style.display='none';
-  abaBtnDashboard.setAttribute('aria-selected','true'); abaBtnSdrs.setAttribute('aria-selected','false');
-});
-abaBtnSdrs.addEventListener('click', ()=>{
-  abaDashboard.style.display='none'; abaSdrs.style.display='';
-  abaBtnDashboard.setAttribute('aria-selected','false'); abaBtnSdrs.setAttribute('aria-selected','true');
-  carregarListaSdrs();
+function mostrarAba(nome){
+  abaDashboard.style.display = nome==='dashboard' ? '' : 'none';
+  abaComparar.style.display = nome==='comparar' ? '' : 'none';
+  abaSdrs.style.display = nome==='sdrs' ? '' : 'none';
+  abaBtnDashboard.setAttribute('aria-selected', String(nome==='dashboard'));
+  abaBtnComparar.setAttribute('aria-selected', String(nome==='comparar'));
+  abaBtnSdrs.setAttribute('aria-selected', String(nome==='sdrs'));
+}
+abaBtnDashboard.addEventListener('click', ()=> mostrarAba('dashboard'));
+abaBtnComparar.addEventListener('click', ()=> mostrarAba('comparar'));
+abaBtnSdrs.addEventListener('click', ()=>{ mostrarAba('sdrs'); carregarListaSdrs(); });
+
+/* ---------- comparar periodos ---------- */
+function somarTotais(linhas){
+  return {
+    prospectou: sum(linhas,'prospectou'), respondeu: sum(linhas,'respondeu'),
+    agendou: sum(linhas,'agendou'), compareceu: sum(linhas,'compareceu'), cliente: sum(linhas,'cliente'),
+  };
+}
+async function buscarPeriodoParaComparar(inicio, fim){
+  const params = new URLSearchParams({ periodo:'intervalo', inicio, fim });
+  const r = await fetch('/api/dados?' + params.toString());
+  const j = await r.json();
+  if(!r.ok) throw new Error(j && j.error ? j.error : ('erro ' + r.status));
+  return somarTotais(j);
+}
+function linhaComparar(label, a, b, ehPercentual){
+  const diff = a===0 ? (b===0?0:100) : ((b-a)/a*100);
+  const sinal = diff>0 ? '+' : '';
+  const cor = diff>0 ? 'var(--win)' : (diff<0 ? '#C0392B' : 'var(--muted)');
+  const va = ehPercentual ? pf(a,1) : nf(a);
+  const vb = ehPercentual ? pf(b,1) : nf(b);
+  return `<tr><td style="text-align:left;">${label}</td><td>${nf(a)}</td><td>${nf(b)}</td><td style="color:${cor};font-weight:600;">${sinal}${diff.toFixed(1)}%</td></tr>`;
+}
+document.getElementById('btnComparar').addEventListener('click', async ()=>{
+  const aIni = document.getElementById('compA_inicio').value, aFim = document.getElementById('compA_fim').value;
+  const bIni = document.getElementById('compB_inicio').value, bFim = document.getElementById('compB_fim').value;
+  const aviso = document.getElementById('avisoComparar');
+  const wrap = document.getElementById('wrapComparar');
+  if(!aIni || !aFim || !bIni || !bFim){
+    aviso.textContent = 'Preencha as duas datas dos dois períodos.'; aviso.classList.add('show'); wrap.style.display='none';
+    return;
+  }
+  aviso.classList.remove('show');
+  const btn = document.getElementById('btnComparar');
+  btn.disabled = true; btn.textContent = 'Comparando…';
+  try{
+    const [a, b] = await Promise.all([
+      buscarPeriodoParaComparar(aIni, aFim),
+      buscarPeriodoParaComparar(bIni, bFim),
+    ]);
+    document.getElementById('tbodyComparar').innerHTML = [
+      linhaComparar('Prospectados', a.prospectou, b.prospectou),
+      linhaComparar('Responderam', a.respondeu, b.respondeu),
+      linhaComparar('Agendaram', a.agendou, b.agendou),
+      linhaComparar('Compareceram', a.compareceu, b.compareceu),
+      linhaComparar('Viraram cliente', a.cliente, b.cliente),
+    ].join('');
+    wrap.style.display = '';
+  }catch(e){
+    aviso.textContent = 'Não deu pra comparar: ' + (e.message||e); aviso.classList.add('show'); wrap.style.display='none';
+  }finally{
+    btn.disabled = false; btn.textContent = 'Comparar';
+  }
 });
 
 /* ---------- cadastro de SDR ---------- */
