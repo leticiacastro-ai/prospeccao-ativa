@@ -331,7 +331,7 @@ function renderStatus(){
     b.className = 'badge aovivo'; b.textContent = 'Ao vivo · atualizado às ' + hora;
   }
   if(mensagemErro){ av.textContent = 'Não deu pra buscar os dados: ' + mensagemErro; av.classList.add('show'); }
-  else if(dadosParciais){ av.textContent = 'O Datacrazy limitou as requisições no meio da busca — os números abaixo são parciais (nem todos os leads do período foram contados ainda).'; av.classList.add('show'); }
+  else if(dadosParciais){ av.textContent = 'A busca não terminou a tempo (Datacrazy limitando ou tempo de execução esgotado) — os números abaixo são parciais (nem todos os leads do período foram contados ainda). Atualize de novo em instantes.'; av.classList.add('show'); }
   else { av.classList.remove('show'); }
 }
 

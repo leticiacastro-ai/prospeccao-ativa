@@ -60,6 +60,14 @@ const CACHE = new Map();            // periodo -> { data, ts }
 const TTL = 3 * 60 * 1000;            // 3 min "fresco"
 const TTL_RESERVA = 30 * 60 * 1000;  // até 30 min como reserva em caso de erro
 
+// Rodando na Vercel (plano Hobby) a funcao so tem 10s de execucao no total —
+// pausas longas estouram isso sozinhas, sem nem chegar a bater rate limit de
+// verdade. Local (server.js) e processo continuo, pode ser bem mais paciente.
+const EM_SERVERLESS = !!process.env.VERCEL;
+const ORCAMENTO_REQUISICAO_MS = EM_SERVERLESS ? 8000 : null; // 2s de folga dos 10s do Hobby
+const PAUSA_ENTRE_PAGINAS = EM_SERVERLESS ? 700 : 9000;
+const PAUSA_ENTRE_DIAS = EM_SERVERLESS ? 400 : 3000;
+
 function nomesDasTags(tags) {
   if (!tags) return [];
   const lista = Array.isArray(tags) ? tags : [tags];
@@ -106,14 +114,17 @@ function faixaDeData(query) {
 
 // Faz a chamada e, se levar 429, espera o tempo que o Datacrazy pedir (Retry-After)
 // e tenta de novo, em vez de desistir rápido — prefere demorar a devolver parcial.
-async function buscarComPaciencia(url, opts) {
-  const maxTentativas = 8; // paciencia total de uns 2 minutos por pagina
+// prazoAte (opcional): timestamp limite — se a proxima espera for estourar isso,
+// desiste na hora em vez de dormir e ser cortado no meio pela Vercel.
+async function buscarComPaciencia(url, opts, prazoAte) {
+  const maxTentativas = 8; // paciencia total de uns 2 minutos por pagina (local); na Vercel o orcamento corta antes
   for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
     const resp = await fetch(url, opts);
     if (resp.status !== 429) return resp;
     if (tentativa === maxTentativas - 1) return resp; // esgotou as tentativas: devolve o 429
     const ra = parseInt(resp.headers.get('retry-after') || '', 10);
     const espera = !isNaN(ra) ? ra * 1000 + 2000 : 5000 * (tentativa + 1); // sempre um pouco mais que o pedido, com margem
+    if (prazoAte && Date.now() + espera > prazoAte) return resp; // sem tempo pra mais uma espera
     await sleep(espera);
   }
 }
@@ -128,7 +139,7 @@ function paramsDeFiltro(faixa) {
   return params.toString();
 }
 
-async function buscarLeadsPaginado(faixa, rotulo) {
+async function buscarLeadsPaginado(faixa, rotulo, prazoAte) {
   const take = 200; // paginas maiores = menos requisicoes pra mesma quantidade de leads
   let skip = 0;
   const todos = [];
@@ -136,8 +147,17 @@ async function buscarLeadsPaginado(faixa, rotulo) {
   const filtroQuery = paramsDeFiltro(faixa);
 
   for (let pagina = 0; pagina < 100; pagina++) {
+    if (prazoAte && Date.now() > prazoAte) {
+      if (todos.length > 0) {
+        console.error(`[api/dados] orcamento de tempo acabou (${rotulo}) — devolvendo parcial (${todos.length} leads)`);
+        return { leads: todos, parcial: true };
+      }
+      const err = new Error('Nao deu tempo de buscar (limite de execucao da funcao). Tente atualizar de novo.');
+      err.code = 429;
+      throw err;
+    }
     const url = `${BASE}/leads?skip=${skip}&take=${take}` + (filtroQuery ? `&${filtroQuery}` : '');
-    const resp = await buscarComPaciencia(url, opts);
+    const resp = await buscarComPaciencia(url, opts, prazoAte);
 
     if (resp.status === 429) {
       const corpoErro = await resp.text().catch(() => '');
@@ -170,7 +190,11 @@ async function buscarLeadsPaginado(faixa, rotulo) {
     console.log(`[api/dados] ${rotulo} pagina ${pagina + 1}: ${pagina_leads.length} leads (skip=${skip}, total ate agora=${todos.length})`);
     if (pagina_leads.length < take) break;
     skip += take;
-    await sleep(9000); // pausa maior entre paginas, com bastante margem pra sobrar cota
+    if (prazoAte && Date.now() + PAUSA_ENTRE_PAGINAS > prazoAte) {
+      console.error(`[api/dados] sem tempo pra mais uma pagina (${rotulo}) — devolvendo parcial (${todos.length} leads)`);
+      return { leads: todos, parcial: true };
+    }
+    await sleep(PAUSA_ENTRE_PAGINAS);
   }
   return { leads: todos, parcial: false };
 }
@@ -200,7 +224,8 @@ function obterProgresso() { return progressoAtual; }
 // so o dia de hoje e sempre buscado fresco. Isso faz trocar de filtro
 // (7 dias, 30 dias, mes...) ser rapido depois da primeira vez.
 async function buscarPorDiasComCache(faixa) {
-  if (!faixa || !faixa.inicio) return buscarLeadsPaginado(faixa, 'sem-filtro');
+  const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
+  if (!faixa || !faixa.inicio) return buscarLeadsPaginado(faixa, 'sem-filtro', prazoAte);
 
   const hoje = inicioDoDia(new Date());
   const chaveHoje = chaveDia(hoje);
@@ -211,6 +236,7 @@ async function buscarPorDiasComCache(faixa) {
 
   try {
     for (const dia of dias) {
+      if (prazoAte && Date.now() > prazoAte) { parcial = true; break; } // sem tempo pra mais dias
       const chave = chaveDia(dia);
       const ehHoje = chave === chaveHoje;
 
@@ -220,12 +246,15 @@ async function buscarPorDiasComCache(faixa) {
       }
 
       try {
-        const r = await buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave);
+        const r = await buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte);
         todos.push(...r.leads);
         if (r.parcial) parcial = true;
         else if (!ehHoje) await armazenamento.salvarDia(chave, r.leads); // so grava cache de dia fechado e busca completa
         progressoAtual.feito++;
-        if (dias.length > 1) await sleep(3000); // pausa entre dias, com margem
+        if (dias.length > 1) {
+          if (prazoAte && Date.now() + PAUSA_ENTRE_DIAS > prazoAte) { parcial = true; break; }
+          await sleep(PAUSA_ENTRE_DIAS);
+        }
       } catch (e) {
         if (todos.length > 0) { parcial = true; break; }
         throw e;
@@ -246,14 +275,23 @@ const DIAS_RETENCAO = 60; // guarda historico dos ultimos 60 dias, o resto e lim
 // dashboard de manha ja acha os numeros prontos, sem esperar calcular.
 async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
   if (!TOKEN) return;
+  // na Vercel (Cron tem o mesmo limite de execucao da funcao), so da tempo
+  // de fechar 1-2 dias por chamada — no regime normal (so falta ontem) isso
+  // sobra. Backfill grande (muitos dias faltando) vai completando aos poucos,
+  // 1+ dia por vez que o Cron rodar, em vez de tentar tudo de uma vez e ser cortado.
+  const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
   const hoje = inicioDoDia(new Date());
   for (let i = diasParaTras; i >= 1; i--) {
+    if (prazoAte && Date.now() > prazoAte) {
+      console.log('[api/dados] aquecimento parou por tempo — continua na proxima chamada');
+      break;
+    }
     const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
     const chave = chaveDia(dia);
     if (await armazenamento.lerDia(chave)) continue; // ja tem, nada a fazer
 
     try {
-      const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave));
+      const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte));
       if (!r.parcial) {
         await armazenamento.salvarDia(chave, r.leads);
         console.log(`[api/dados] cache do dia ${chave} aquecido: ${r.leads.length} leads`);
@@ -261,7 +299,8 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
     } catch (e) {
       console.error(`[api/dados] falha ao aquecer cache do dia ${chave}:`, (e && e.message) || e);
     }
-    await sleep(3000); // pausa entre dias, com margem
+    if (prazoAte && Date.now() + PAUSA_ENTRE_DIAS > prazoAte) break;
+    await sleep(PAUSA_ENTRE_DIAS);
   }
 }
 
