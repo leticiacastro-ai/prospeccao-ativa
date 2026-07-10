@@ -304,6 +304,41 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
   }
 }
 
+const DIAS_GRACA_REVALIDACAO = 14; // reprocessa esses dias de novo toda madrugada
+
+// Um dia fechado normalmente nunca e buscado de novo — mas um lead pode
+// continuar avancando no funil depois do dia em que foi prospectado (ex.:
+// prospectou e agendou hoje, mas a reuniao e so amanha — o "compareceu" so
+// vira verdade um dia depois). Se travar o cache logo no dia seguinte, esse
+// avanco posterior nunca aparece no fechamento da semana/mes.
+// Por isso os ultimos DIAS_GRACA_REVALIDACAO dias sao buscados de novo (nao
+// so os que faltam) toda madrugada, ate esse status "assentar". So depois
+// desse prazo o dia fica travado de vez.
+async function revalidarDiasRecentes(diasGraca = DIAS_GRACA_REVALIDACAO) {
+  if (!TOKEN) return;
+  const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
+  const hoje = inicioDoDia(new Date());
+  for (let i = diasGraca; i >= 1; i--) {
+    if (prazoAte && Date.now() > prazoAte) {
+      console.log('[api/dados] revalidacao parou por tempo — continua na proxima chamada');
+      break;
+    }
+    const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
+    const chave = chaveDia(dia);
+    try {
+      const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte));
+      if (!r.parcial) {
+        await armazenamento.salvarDia(chave, r.leads); // sobrescreve com o status mais atual
+        console.log(`[api/dados] dia ${chave} revalidado: ${r.leads.length} leads`);
+      }
+    } catch (e) {
+      console.error(`[api/dados] falha ao revalidar dia ${chave}:`, (e && e.message) || e);
+    }
+    if (prazoAte && Date.now() + PAUSA_ENTRE_DIAS > prazoAte) break;
+    await sleep(PAUSA_ENTRE_DIAS);
+  }
+}
+
 // Apaga cache de dia mais velho que DIAS_RETENCAO — mantem so o historico
 // recente, sem deixar o armazenamento crescer pra sempre.
 async function limparDiasAntigos() {
@@ -329,12 +364,15 @@ function msAteProximoHorario(hora, minuto) {
   return proximo - agora;
 }
 
-// Uma rodada de manutencao: limpa o que passou dos 60 dias e busca o que
-// tiver faltando. Usado tanto pelo agendamento local (server.js) quanto
-// pelo Vercel Cron em producao (api/cron-aquecer.js).
+// Uma rodada de manutencao: limpa o que passou dos 60 dias, busca o que
+// tiver faltando, e reprocessa os ultimos dias (pra pegar avanco no funil
+// que so aconteceu depois do dia em que o lead foi prospectado). Usado tanto
+// pelo agendamento local (server.js) quanto pelo Vercel Cron em producao
+// (api/cron-aquecer.js).
 async function rodarManutencaoDoCache() {
   await limparDiasAntigos().catch(() => {});
-  await aquecerDiasFechados().catch(() => {});
+  await aquecerDiasFechados().catch(() => {}); // preenche o que ainda nao tem cache nenhum
+  await revalidarDiasRecentes().catch(() => {}); // reprocessa os ultimos dias, pega status que so se resolveu depois
 }
 
 // Agenda o aquecimento pra rodar todo dia de madrugada (antes da operacao
