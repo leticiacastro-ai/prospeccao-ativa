@@ -401,24 +401,32 @@ async function calcularResumoHistorico() {
   let totalAgendou = 0;
   let totalProspectou = 0;
   let diasComDado = 0;
+  let diasComAgendamento = 0;
+  let diasComProspeccao = 0;
 
   for (let i = 1; i <= DIAS_RETENCAO; i++) {
     const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
     const chave = chaveDia(dia);
     const leads = await armazenamento.lerDia(chave);
     if (!leads) continue;
-    const linhas = agregar(leads, null);
-    totalAgendou += linhas.reduce((a, r) => a + r.agendou, 0);
-    totalProspectou += linhas.reduce((a, r) => a + r.prospectou, 0);
     diasComDado++;
+    const linhas = agregar(leads, null);
+    const agendouNoDia = linhas.reduce((a, r) => a + r.agendou, 0);
+    const prospectouNoDia = linhas.reduce((a, r) => a + r.prospectou, 0);
+    totalAgendou += agendouNoDia;
+    totalProspectou += prospectouNoDia;
+    if (agendouNoDia > 0) diasComAgendamento++;
+    if (prospectouNoDia > 0) diasComProspeccao++;
   }
 
   return {
     diasComDado,
+    diasComAgendamento,
+    diasComProspeccao,
     totalAgendamentos: totalAgendou,
-    mediaAgendamentosPorDia: diasComDado > 0 ? totalAgendou / diasComDado : 0,
+    mediaAgendamentosPorDia: diasComAgendamento > 0 ? totalAgendou / diasComAgendamento : 0,
     totalProspectados: totalProspectou,
-    mediaProspectadosPorDia: diasComDado > 0 ? totalProspectou / diasComDado : 0,
+    mediaProspectadosPorDia: diasComProspeccao > 0 ? totalProspectou / diasComProspeccao : 0,
   };
 }
 
