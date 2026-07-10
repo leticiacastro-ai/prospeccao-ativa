@@ -113,7 +113,7 @@ async function buscarComPaciencia(url, opts) {
     if (resp.status !== 429) return resp;
     if (tentativa === maxTentativas - 1) return resp; // esgotou as tentativas: devolve o 429
     const ra = parseInt(resp.headers.get('retry-after') || '', 10);
-    const espera = !isNaN(ra) ? ra * 1000 : 3000 * (tentativa + 1);
+    const espera = !isNaN(ra) ? ra * 1000 + 2000 : 5000 * (tentativa + 1); // sempre um pouco mais que o pedido, com margem
     await sleep(espera);
   }
 }
@@ -170,7 +170,7 @@ async function buscarLeadsPaginado(faixa, rotulo) {
     console.log(`[api/dados] ${rotulo} pagina ${pagina + 1}: ${pagina_leads.length} leads (skip=${skip}, total ate agora=${todos.length})`);
     if (pagina_leads.length < take) break;
     skip += take;
-    await sleep(5000); // pausa maior entre paginas, poupa cota da conta
+    await sleep(9000); // pausa maior entre paginas, com bastante margem pra sobrar cota
   }
   return { leads: todos, parcial: false };
 }
@@ -225,7 +225,7 @@ async function buscarPorDiasComCache(faixa) {
         if (r.parcial) parcial = true;
         else if (!ehHoje) await armazenamento.salvarDia(chave, r.leads); // so grava cache de dia fechado e busca completa
         progressoAtual.feito++;
-        if (dias.length > 1) await sleep(1500); // pausa curta entre dias
+        if (dias.length > 1) await sleep(3000); // pausa entre dias, com margem
       } catch (e) {
         if (todos.length > 0) { parcial = true; break; }
         throw e;
@@ -261,7 +261,7 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
     } catch (e) {
       console.error(`[api/dados] falha ao aquecer cache do dia ${chave}:`, (e && e.message) || e);
     }
-    await sleep(1500); // pausa curta entre dias
+    await sleep(3000); // pausa entre dias, com margem
   }
 }
 
