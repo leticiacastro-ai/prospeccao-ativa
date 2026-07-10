@@ -57,7 +57,7 @@ function comFila(tarefa) {
 
 // --- cache simples na memória do servidor ---
 const CACHE = new Map();            // periodo -> { data, ts }
-const TTL = 60 * 1000;                // 1 min "fresco" — bate com o auto-refresh do front
+const TTL = 3 * 60 * 1000;            // 3 min "fresco"
 const TTL_RESERVA = 30 * 60 * 1000;  // até 30 min como reserva em caso de erro
 
 // Rodando na Vercel (plano Hobby) a funcao so tem 10s de execucao no total —
