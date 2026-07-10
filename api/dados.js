@@ -106,7 +106,7 @@ function faixaDeData(query) {
   }
   const dias = parseInt(periodo, 10);
   if (!isNaN(dias)) {
-    const d = new Date(agora); d.setDate(d.getDate() - dias);
+    const d = new Date(agora); d.setDate(d.getDate() - (dias - 1)); // -1: hoje ja conta como 1 dos "dias"
     return { inicio: inicioDoDia(d), fim: null }; // dia cheio, pra bater com o cache diario
   }
   return { inicio: null, fim: null };
@@ -393,6 +393,35 @@ function agregar(leads, faixa) {
   return resultado;
 }
 
+// Resumo dos ultimos 60 dias fechados (so os que ja tem cache salvo — nao
+// bate no Datacrazy, so le o que ja foi guardado). Usado pro painel de
+// media, nao pro filtro escolhido pelo usuario.
+async function calcularResumoHistorico() {
+  const hoje = inicioDoDia(new Date());
+  let totalAgendou = 0;
+  let totalProspectou = 0;
+  let diasComDado = 0;
+
+  for (let i = 1; i <= DIAS_RETENCAO; i++) {
+    const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
+    const chave = chaveDia(dia);
+    const leads = await armazenamento.lerDia(chave);
+    if (!leads) continue;
+    const linhas = agregar(leads, null);
+    totalAgendou += linhas.reduce((a, r) => a + r.agendou, 0);
+    totalProspectou += linhas.reduce((a, r) => a + r.prospectou, 0);
+    diasComDado++;
+  }
+
+  return {
+    diasComDado,
+    totalAgendamentos: totalAgendou,
+    mediaAgendamentosPorDia: diasComDado > 0 ? totalAgendou / diasComDado : 0,
+    totalProspectados: totalProspectou,
+    mediaProspectadosPorDia: diasComDado > 0 ? totalProspectou / diasComDado : 0,
+  };
+}
+
 module.exports = async (req, res) => {
   try {
     if (!TOKEN) {
@@ -451,3 +480,4 @@ module.exports.rodarManutencaoDoCache = rodarManutencaoDoCache;
 // proxima consulta recalcular com a lista nova em vez de esperar o TTL.
 module.exports.limparCacheResposta = () => CACHE.clear();
 module.exports.obterProgresso = obterProgresso;
+module.exports.calcularResumoHistorico = calcularResumoHistorico;

@@ -168,6 +168,14 @@
 
     <div class="summary" id="summary"></div>
 
+    <div class="panel" id="painelResumoHistorico" style="display:none">
+      <div class="panel-head">
+        <h2>Média diária — últimos 60 dias</h2>
+        <div class="hint" id="resumoHint"></div>
+      </div>
+      <div class="summary" id="resumoHistorico" style="margin-bottom:0"></div>
+    </div>
+
     <div class="panel">
       <div class="panel-head">
         <h2>Funil macro</h2>
@@ -335,6 +343,22 @@ function renderStatus(){
   else { av.classList.remove('show'); }
 }
 
+async function carregarResumoHistorico(){
+  try{
+    const r = await fetch('/api/resumo');
+    const j = await r.json();
+    const painel = document.getElementById('painelResumoHistorico');
+    if(!j.diasComDado){ painel.style.display='none'; return; }
+    painel.style.display='';
+    document.getElementById('resumoHint').textContent = `${j.diasComDado} de 60 dias com histórico calculado`;
+    document.getElementById('resumoHistorico').innerHTML = `
+      <div class="kpi"><div class="lbl">Média de agendamentos/dia</div><div class="val">${j.mediaAgendamentosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
+      <div class="kpi"><div class="lbl">Média de prospectados/dia</div><div class="val">${j.mediaProspectadosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
+      <div class="kpi"><div class="lbl">Total de agendamentos (60d)</div><div class="val">${nf(j.totalAgendamentos)}</div></div>
+    `;
+  }catch(e){ /* silencioso — painel so some se nao tiver dado, sem travar o resto da tela */ }
+}
+
 function renderResumo(){
   const prosp=sum(dados,'prospectou'), cli=sum(dados,'cliente'), agen=sum(dados,'agendou'), comp=sum(dados,'compareceu');
   const cards=[
@@ -483,6 +507,7 @@ document.getElementById('dataInicio').addEventListener('change',atualizar);
 document.getElementById('dataFim').addEventListener('change',atualizar);
 atualizarVisibilidadeCampos();
 atualizar();
+carregarResumoHistorico();
 setInterval(atualizar, 60 * 1000); // atualiza sozinho a cada 1 min
 
 /* ---------- abas ---------- */

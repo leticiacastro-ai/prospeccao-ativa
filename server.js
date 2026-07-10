@@ -9,6 +9,7 @@ const dados = require('./api/dados.js');
 const sdrs = require('./api/sdrs.js');
 const progresso = require('./api/progresso.js');
 const cronAquecer = require('./api/cron-aquecer.js');
+const resumo = require('./api/resumo.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -62,6 +63,16 @@ const server = http.createServer(async (req, res) => {
       json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
     };
     await cronAquecer(reqFake, resFake);
+    return;
+  }
+
+  if (parsed.pathname === '/api/resumo') {
+    const resFake = {
+      status(codigo) { res.statusCode = codigo; return this; },
+      setHeader(k, v) { res.setHeader(k, v); },
+      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
+    };
+    await resumo({}, resFake);
     return;
   }
 
