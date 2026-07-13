@@ -388,11 +388,11 @@ function agendarAquecimentoDiario(hora = 5, minuto = 0) {
   }, msAteProximoHorario(hora, minuto));
 }
 
-function agregar(leads, faixa) {
+async function agregar(leads, faixa) {
   // so conta quem estiver cadastrado como SDR (aba de Cadastro de SDR).
   // se ninguem foi cadastrado ainda, nao conta ninguem — evita misturar
   // gente de outro cargo que por acaso ficou como atendente de um lead.
-  const cadastrados = new Set(lerSdrsCadastrados().map((n) => n.toLowerCase()));
+  const cadastrados = new Set((await lerSdrsCadastrados()).map((n) => n.toLowerCase()));
 
   const porSdr = new Map();
   for (const lead of leads) {
@@ -448,7 +448,7 @@ async function calcularResumoHistorico() {
     const leads = await armazenamento.lerDia(chave);
     if (!leads) continue;
     diasComDado++;
-    const linhas = agregar(leads, null);
+    const linhas = await agregar(leads, null);
     const agendouNoDia = linhas.reduce((a, r) => a + r.agendou, 0);
     const prospectouNoDia = linhas.reduce((a, r) => a + r.prospectou, 0);
     totalAgendou += agendouNoDia;
@@ -497,7 +497,7 @@ module.exports = async (req, res) => {
 
       const faixa = faixaDeData(query);
       const busca = await comFila(() => buscarPorDiasComCache(faixa));
-      const resultado = agregar(busca.leads, faixa);
+      const resultado = await agregar(busca.leads, faixa);
       CACHE.set(chaveCache, { data: resultado, ts: Date.now(), parcial: busca.parcial });
       res.setHeader('Cache-Control', 'no-store');
       if (busca.parcial) res.setHeader('X-Dados-Parcial', 'true');
