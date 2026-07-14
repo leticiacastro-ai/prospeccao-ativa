@@ -60,6 +60,13 @@ const CACHE = new Map();            // periodo -> { data, ts }
 const TTL = 3 * 60 * 1000;            // 3 min "fresco"
 const TTL_RESERVA = 30 * 60 * 1000;  // até 30 min como reserva em caso de erro
 
+// Cache do dia de HOJE — antes buscava fresco no Datacrazy toda vez que
+// alguem trocava o filtro (7 dias, 30 dias, mes...), mesmo trocando so o
+// recorte e nao o dia em si. Agora busca no maximo 1x a cada 5 min e todo
+// filtro que incluir hoje reusa esse mesmo resultado.
+let cacheHoje = { chave: null, leads: null, ts: 0 };
+const TTL_HOJE = 5 * 60 * 1000;
+
 // Rodando na Vercel (plano Hobby) a funcao so tem 10s de execucao no total —
 // pausas longas estouram isso sozinhas, sem nem chegar a bater rate limit de
 // verdade. Local (server.js) e processo continuo, pode ser bem mais paciente.
@@ -213,6 +220,36 @@ function listarDiasDaFaixa(faixa) {
   return dias;
 }
 
+// Busca hoje sozinho e atualiza cacheHoje, sem depender de nenhum filtro/
+// request ter chegado. Usado pelo agendamento de 5 em 5 min (server.js) pra
+// manter cacheHoje sempre fresco em background, em vez de so recalcular na
+// hora que alguem pede.
+async function atualizarCacheHoje() {
+  if (!TOKEN) return;
+  const hoje = inicioDoDia(new Date());
+  const chave = chaveDia(hoje);
+  const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
+  try {
+    const r = await comFila(() => buscarLeadsPaginado({ inicio: hoje, fim: fimDoDia(hoje) }, chave, prazoAte));
+    if (!r.parcial) {
+      cacheHoje = { chave, leads: r.leads, ts: Date.now() };
+      module.exports.limparCacheResposta(); // descarta respostas ja montadas com o hoje velho
+      console.log(`[api/dados] cacheHoje atualizado: ${r.leads.length} leads`);
+    }
+  } catch (e) {
+    console.error('[api/dados] falha ao atualizar cacheHoje:', (e && e.message) || e);
+  }
+}
+
+// So faz sentido rodando em processo continuo (server.js) — na Vercel cada
+// chamada e uma instancia nova/efemera, setInterval nao sobrevive entre
+// requests, entao la o refresh continua sendo o lazy (TTL_HOJE na hora do
+// request, ver buscarPorDiasComCache).
+function agendarAtualizacaoHoje() {
+  atualizarCacheHoje();
+  setInterval(atualizarCacheHoje, TTL_HOJE);
+}
+
 // Progresso da busca em andamento (uma so por vez, por causa da fila) —
 // front-end consulta isso pra mostrar barra de "calculando" em vez de
 // travar numa tela vazia ou mostrar dado inventado.
@@ -221,8 +258,9 @@ function obterProgresso() { return progressoAtual; }
 
 // Busca dia por dia em vez do periodo inteiro de uma vez. Dia fechado
 // (ontem pra tras) usa cache em arquivo e nao bate no Datacrazy de novo;
-// so o dia de hoje e sempre buscado fresco. Isso faz trocar de filtro
-// (7 dias, 30 dias, mes...) ser rapido depois da primeira vez.
+// hoje usa cacheHoje (5 min) — busca fresco no maximo 1x a cada 5 min,
+// e qualquer filtro que inclua hoje reusa esse mesmo resultado. Isso faz
+// trocar de filtro (7 dias, 30 dias, mes...) ser rapido depois da primeira vez.
 async function buscarPorDiasComCache(faixa) {
   const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
   if (!faixa || !faixa.inicio) return buscarLeadsPaginado(faixa, 'sem-filtro', prazoAte);
@@ -243,6 +281,8 @@ async function buscarPorDiasComCache(faixa) {
       if (!ehHoje) {
         const emCache = await armazenamento.lerDia(chave);
         if (emCache) { todos.push(...emCache); progressoAtual.feito++; continue; }
+      } else if (cacheHoje.chave === chave && (Date.now() - cacheHoje.ts) < TTL_HOJE) {
+        todos.push(...cacheHoje.leads); progressoAtual.feito++; continue;
       }
 
       try {
@@ -250,6 +290,7 @@ async function buscarPorDiasComCache(faixa) {
         todos.push(...r.leads);
         if (r.parcial) parcial = true;
         else if (!ehHoje) await armazenamento.salvarDia(chave, r.leads); // so grava cache de dia fechado e busca completa
+        else cacheHoje = { chave, leads: r.leads, ts: Date.now() }; // guarda hoje por TTL_HOJE, reusado por qualquer filtro
         progressoAtual.feito++;
         if (dias.length > 1) {
           if (prazoAte && Date.now() + PAUSA_ENTRE_DIAS > prazoAte) { parcial = true; break; }
@@ -519,6 +560,8 @@ module.exports = async (req, res) => {
 };
 
 module.exports.agendarAquecimentoDiario = agendarAquecimentoDiario;
+module.exports.agendarAtualizacaoHoje = agendarAtualizacaoHoje;
+module.exports.atualizarCacheHoje = atualizarCacheHoje;
 module.exports.rodarManutencaoDoCache = rodarManutencaoDoCache;
 
 // Chamado pelo api/sdrs.js quando o cadastro de SDR muda — descarta so a

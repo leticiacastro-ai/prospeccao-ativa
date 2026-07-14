@@ -9,6 +9,7 @@ const dados = require('./api/dados.js');
 const sdrs = require('./api/sdrs.js');
 const progresso = require('./api/progresso.js');
 const cronAquecer = require('./api/cron-aquecer.js');
+const cronHoje = require('./api/cron-hoje.js');
 const resumo = require('./api/resumo.js');
 
 const PORT = process.env.PORT || 3000;
@@ -66,6 +67,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (parsed.pathname === '/api/cron-hoje') {
+    const reqFake = { headers: req.headers };
+    const resFake = {
+      status(codigo) { res.statusCode = codigo; return this; },
+      setHeader(k, v) { res.setHeader(k, v); },
+      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
+    };
+    await cronHoje(reqFake, resFake);
+    return;
+  }
+
   if (parsed.pathname === '/api/resumo') {
     const resFake = {
       status(codigo) { res.statusCode = codigo; return this; },
@@ -103,4 +115,5 @@ server.listen(PORT, () => {
     console.log('Aviso: DATACRAZY_API_KEY não definida — /api/dados vai responder com erro.');
   }
   dados.agendarAquecimentoDiario(3, 0); // roda no boot e todo dia as 3h, antes da operacao comecar
+  dados.agendarAtualizacaoHoje(); // roda no boot e depois a cada 5 min, atualiza cacheHoje em background
 });

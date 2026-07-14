@@ -284,15 +284,24 @@ async function consultarProgresso(){
   }catch(e){ /* ignora falha de poll, so nao atualiza a barra dessa vez */ }
 }
 
+let atrasoPollProgresso = null;
+
+// So mostra a barra "Calculando..." se a resposta realmente demorar (>400ms).
+// Se o dado ja estiver em cache (comum: filtro repetido, dia de hoje ja
+// atualizado nos ultimos 5 min), a resposta volta na hora e a barra nunca
+// chega a aparecer — antes ela piscava toda vez, mesmo sem recalcular nada.
 function iniciarPollProgresso(){
   calculando = true;
-  document.getElementById('progressoWrap').classList.add('show');
-  document.getElementById('barraProgresso').style.width = '0%';
-  consultarProgresso();
-  pollProgresso = setInterval(consultarProgresso, 1500);
+  atrasoPollProgresso = setTimeout(()=>{
+    document.getElementById('progressoWrap').classList.add('show');
+    document.getElementById('barraProgresso').style.width = '0%';
+    consultarProgresso();
+    pollProgresso = setInterval(consultarProgresso, 1500);
+  }, 400);
 }
 function pararPollProgresso(){
   calculando = false;
+  clearTimeout(atrasoPollProgresso);
   clearInterval(pollProgresso);
   document.getElementById('progressoWrap').classList.remove('show');
 }
