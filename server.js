@@ -11,6 +11,9 @@ const progresso = require('./api/progresso.js');
 const cronAquecer = require('./api/cron-aquecer.js');
 const cronHoje = require('./api/cron-hoje.js');
 const resumo = require('./api/resumo.js');
+const exportCsv = require('./api/export.js');
+
+const LIMITE_BODY_BYTES = 1 * 1024 * 1024; // 1MB — cadastro de SDR nao precisa de mais que isso
 
 const PORT = process.env.PORT || 3000;
 
@@ -22,81 +25,56 @@ function servirArquivo(res, caminho, tipo) {
   });
 }
 
-function lerCorpoJson(req) {
-  return new Promise((resolve) => {
+function lerCorpoJson(req, res) {
+  return new Promise((resolve, reject) => {
     let dados = '';
-    req.on('data', (c) => { dados += c; });
+    let tamanho = 0;
+    req.on('data', (c) => {
+      tamanho += c.length;
+      if (tamanho > LIMITE_BODY_BYTES) {
+        req.destroy();
+        reject(Object.assign(new Error('Corpo da requisicao excede o limite permitido.'), { code: 413 }));
+        return;
+      }
+      dados += c;
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(dados || '{}')); } catch { resolve({}); }
     });
+    req.on('error', () => resolve({}));
   });
+}
+
+// resFake comum a todas as rotas de api/*.js — imita a assinatura (req,res)
+// que a Vercel passa pras serverless functions, pra poder rodar o mesmo
+// codigo local (server.js) e la (Vercel), sem duplicar por rota.
+function criarResFake(res) {
+  return {
+    status(codigo) { res.statusCode = codigo; return this; },
+    setHeader(k, v) { res.setHeader(k, v); },
+    json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
+    end(corpo) { res.end(corpo); },
+  };
 }
 
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
+  const resFake = criarResFake(res);
 
-  if (parsed.pathname === '/api/dados') {
-    const reqFake = { query: parsed.query };
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await dados(reqFake, resFake);
-    return;
-  }
-
-  if (parsed.pathname === '/api/progresso') {
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await progresso({}, resFake);
-    return;
-  }
-
-  if (parsed.pathname === '/api/cron-aquecer') {
-    const reqFake = { headers: req.headers };
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await cronAquecer(reqFake, resFake);
-    return;
-  }
-
-  if (parsed.pathname === '/api/cron-hoje') {
-    const reqFake = { headers: req.headers };
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await cronHoje(reqFake, resFake);
-    return;
-  }
-
-  if (parsed.pathname === '/api/resumo') {
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await resumo({}, resFake);
-    return;
-  }
+  if (parsed.pathname === '/api/dados') { await dados({ query: parsed.query }, resFake); return; }
+  if (parsed.pathname === '/api/export') { await exportCsv({ query: parsed.query }, resFake); return; }
+  if (parsed.pathname === '/api/progresso') { await progresso({}, resFake); return; }
+  if (parsed.pathname === '/api/cron-aquecer') { await cronAquecer({ headers: req.headers }, resFake); return; }
+  if (parsed.pathname === '/api/cron-hoje') { await cronHoje({ headers: req.headers }, resFake); return; }
+  if (parsed.pathname === '/api/resumo') { await resumo({}, resFake); return; }
 
   if (parsed.pathname === '/api/sdrs') {
-    const corpo = ['POST','PUT','DELETE'].includes(req.method) ? await lerCorpoJson(req) : {};
-    const reqFake = { method: req.method, body: corpo };
-    const resFake = {
-      status(codigo) { res.statusCode = codigo; return this; },
-      setHeader(k, v) { res.setHeader(k, v); },
-      json(obj) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); },
-    };
-    await sdrs(reqFake, resFake);
+    let corpo = {};
+    if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
+      try { corpo = await lerCorpoJson(req); }
+      catch (e) { res.statusCode = e.code || 400; res.end(JSON.stringify({ error: e.message })); return; }
+    }
+    await sdrs({ method: req.method, body: corpo }, resFake);
     return;
   }
 

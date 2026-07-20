@@ -87,6 +87,18 @@ function nomesDasTags(tags) {
 function inicioDoDia(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
 function fimDoDia(d) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
 
+const REGEX_DATA = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_DIAS_PERIODO = 3650; // 10 anos — evita periodo="999999999" gerar uma faixa absurda
+
+// Converte "YYYY-MM-DD" pra Date local (meia-noite). Retorna null se o
+// formato ou o valor forem invalidos, em vez de deixar virar "Invalid Date"
+// e propagar silenciosamente pro filtro.
+function parseDataQuery(str) {
+  if (!str || !REGEX_DATA.test(str)) return null;
+  const d = new Date(str + 'T00:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
 // Retorna { inicio, fim } (fim pode ser null = sem limite superior, até agora).
 function faixaDeData(query) {
   const periodo = (query && query.periodo) || '30';
@@ -100,20 +112,21 @@ function faixaDeData(query) {
     return { inicio: inicioDoDia(ontem), fim: fimDoDia(ontem) };
   }
   if (periodo === 'data') {
-    const d = query.data ? new Date(query.data + 'T00:00:00') : agora;
+    const d = parseDataQuery(query.data) || agora;
     return { inicio: inicioDoDia(d), fim: fimDoDia(d) };
   }
   if (periodo === 'intervalo') {
-    const inicio = query.inicio ? new Date(query.inicio + 'T00:00:00') : null;
-    const fim = query.fim ? fimDoDia(new Date(query.fim + 'T00:00:00')) : null;
-    return { inicio, fim };
+    const inicio = parseDataQuery(query.inicio);
+    const fimBase = parseDataQuery(query.fim);
+    return { inicio, fim: fimBase ? fimDoDia(fimBase) : null };
   }
   if (periodo === 'mes') {
     return { inicio: new Date(agora.getFullYear(), agora.getMonth(), 1), fim: null };
   }
   const dias = parseInt(periodo, 10);
-  if (!isNaN(dias)) {
-    const d = new Date(agora); d.setDate(d.getDate() - (dias - 1)); // -1: hoje ja conta como 1 dos "dias"
+  if (!isNaN(dias) && dias > 0) {
+    const diasLimitados = Math.min(dias, MAX_DIAS_PERIODO);
+    const d = new Date(agora); d.setDate(d.getDate() - (diasLimitados - 1)); // -1: hoje ja conta como 1 dos "dias"
     return { inicio: inicioDoDia(d), fim: null }; // dia cheio, pra bater com o cache diario
   }
   return { inicio: null, fim: null };
@@ -308,7 +321,7 @@ async function buscarPorDiasComCache(faixa) {
   return { leads: todos, parcial };
 }
 
-const DIAS_RETENCAO = 60; // guarda historico dos ultimos 60 dias, o resto e limpo
+const DIAS_RETENCAO = 100; // guarda historico dos ultimos 100 dias, o resto e limpo
 
 // Roda de madrugada (ou quando o servidor sobe): busca e salva o cache de
 // todo dia fechado que ainda estiver faltando (nao so ontem — cobre o caso
@@ -405,7 +418,7 @@ function msAteProximoHorario(hora, minuto) {
   return proximo - agora;
 }
 
-// Uma rodada de manutencao: limpa o que passou dos 60 dias, busca o que
+// Uma rodada de manutencao: limpa o que passou dos 100 dias, busca o que
 // tiver faltando, e reprocessa os ultimos dias (pra pegar avanco no funil
 // que so aconteceu depois do dia em que o lead foi prospectado). Usado tanto
 // pelo agendamento local (server.js) quanto pelo Vercel Cron em producao
@@ -472,7 +485,7 @@ async function agregar(leads, faixa) {
   return resultado;
 }
 
-// Resumo dos ultimos 60 dias fechados (so os que ja tem cache salvo — nao
+// Resumo dos ultimos 100 dias fechados (so os que ja tem cache salvo — nao
 // bate no Datacrazy, so le o que ja foi guardado). Usado pro painel de
 // media, nao pro filtro escolhido pelo usuario.
 async function calcularResumoHistorico() {
@@ -509,53 +522,53 @@ async function calcularResumoHistorico() {
   };
 }
 
+// Busca + agrega pro periodo pedido, com o mesmo cache de resposta usado
+// pela rota HTTP. Extraido do handler pra poder ser chamado tambem pelo
+// export CSV (api/export.js) sem duplicar a logica de cache/fila/reserva.
+async function obterResultado(query) {
+  if (!TOKEN) {
+    const err = new Error('Falta configurar a variavel DATACRAZY_API_KEY na Vercel.');
+    err.code = 500;
+    throw err;
+  }
+
+  const chaveCache = JSON.stringify({ p: query.periodo || '30', d: query.data, i: query.inicio, f: query.fim });
+  const agora = Date.now();
+  const emCache = CACHE.get(chaveCache);
+
+  if (emCache && (agora - emCache.ts) < TTL) {
+    return { resultado: emCache.data, parcial: emCache.parcial };
+  }
+
+  try {
+    const recheck = CACHE.get(chaveCache);
+    if (recheck && (Date.now() - recheck.ts) < TTL) {
+      return { resultado: recheck.data, parcial: recheck.parcial };
+    }
+
+    const faixa = faixaDeData(query);
+    const busca = await comFila(() => buscarPorDiasComCache(faixa));
+    const resultado = await agregar(busca.leads, faixa);
+    CACHE.set(chaveCache, { data: resultado, ts: Date.now(), parcial: busca.parcial });
+    return { resultado, parcial: busca.parcial };
+  } catch (e) {
+    console.error('[api/dados] erro ao buscar leads:', (e && e.message) || e);
+    if (emCache && (agora - emCache.ts) < TTL_RESERVA) {
+      return { resultado: emCache.data, parcial: true };
+    }
+    e.code = e.code === 429 ? 429 : 500;
+    throw e;
+  }
+}
+
 module.exports = async (req, res) => {
   try {
-    if (!TOKEN) {
-      return res.status(500).json({ error: 'Falta configurar a variavel DATACRAZY_API_KEY na Vercel.' });
-    }
-
-    const query = req.query || {};
-    const chaveCache = JSON.stringify({ p: query.periodo || '30', d: query.data, i: query.inicio, f: query.fim });
-    const agora = Date.now();
-    const emCache = CACHE.get(chaveCache);
-
-    // cache fresco: devolve na hora, sem chamar o Datacrazy
-    if (emCache && (agora - emCache.ts) < TTL) {
-      res.setHeader('Cache-Control', 'no-store');
-      if (emCache.parcial) res.setHeader('X-Dados-Parcial', 'true');
-      return res.status(200).json(emCache.data);
-    }
-
-    try {
-      // reconfere o cache: pode ter sido preenchido enquanto esperava a fila
-      const recheck = CACHE.get(chaveCache);
-      if (recheck && (Date.now() - recheck.ts) < TTL) {
-        res.setHeader('Cache-Control', 'no-store');
-        if (recheck.parcial) res.setHeader('X-Dados-Parcial', 'true');
-        return res.status(200).json(recheck.data);
-      }
-
-      const faixa = faixaDeData(query);
-      const busca = await comFila(() => buscarPorDiasComCache(faixa));
-      const resultado = await agregar(busca.leads, faixa);
-      CACHE.set(chaveCache, { data: resultado, ts: Date.now(), parcial: busca.parcial });
-      res.setHeader('Cache-Control', 'no-store');
-      if (busca.parcial) res.setHeader('X-Dados-Parcial', 'true');
-      return res.status(200).json(resultado);
-    } catch (e) {
-      console.error('[api/dados] erro ao buscar leads:', (e && e.message) || e);
-      // deu erro (ex.: 429): se tiver um resultado de reserva, usa ele
-      if (emCache && (agora - emCache.ts) < TTL_RESERVA) {
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('X-Dados-Parcial', 'true');
-        return res.status(200).json(emCache.data);
-      }
-      const status = e.code === 429 ? 429 : 500;
-      return res.status(status).json({ error: String((e && e.message) || e) });
-    }
+    const { resultado, parcial } = await obterResultado(req.query || {});
+    res.setHeader('Cache-Control', 'no-store');
+    if (parcial) res.setHeader('X-Dados-Parcial', 'true');
+    return res.status(200).json(resultado);
   } catch (e) {
-    return res.status(500).json({ error: String((e && e.message) || e) });
+    return res.status(e.code === 429 || e.code === 500 ? e.code : 500).json({ error: String((e && e.message) || e) });
   }
 };
 
@@ -570,3 +583,4 @@ module.exports.rodarManutencaoDoCache = rodarManutencaoDoCache;
 module.exports.limparCacheResposta = () => CACHE.clear();
 module.exports.obterProgresso = obterProgresso;
 module.exports.calcularResumoHistorico = calcularResumoHistorico;
+module.exports.obterResultado = obterResultado;

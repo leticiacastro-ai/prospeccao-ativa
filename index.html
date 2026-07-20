@@ -140,6 +140,8 @@
           <li role="option" data-value="7">Últimos 7 dias</li>
           <li role="option" data-value="14">Últimos 14 dias</li>
           <li role="option" data-value="30">Últimos 30 dias</li>
+          <li role="option" data-value="60">Últimos 60 dias</li>
+          <li role="option" data-value="100">Últimos 100 dias</li>
           <li role="option" data-value="mes">Este mês</li>
           <li class="dropdown-sep"></li>
           <li role="option" data-value="data">Data específica</li>
@@ -154,6 +156,10 @@
       <button class="refresh" id="btnRefresh" aria-label="Atualizar dados">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         Atualizar
+      </button>
+      <button class="refresh" id="btnExportar" aria-label="Exportar CSV" style="background:#fff;color:var(--ink);border:1px solid var(--line);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+        Exportar CSV
       </button>
     </div>
   </div>
@@ -171,7 +177,7 @@
 
     <div class="panel" id="painelResumoHistorico" style="display:none">
       <div class="panel-head">
-        <h2>Média diária — últimos 60 dias</h2>
+        <h2>Média diária — últimos 100 dias</h2>
         <div class="hint" id="resumoHint"></div>
       </div>
       <div class="summary" id="resumoHistorico" style="margin-bottom:0"></div>
@@ -397,11 +403,11 @@ async function carregarResumoHistorico(){
     const painel = document.getElementById('painelResumoHistorico');
     if(!j.diasComDado){ painel.style.display='none'; return; }
     painel.style.display='';
-    document.getElementById('resumoHint').textContent = `${j.diasComDado} de 60 dias com histórico calculado · média considera só dia com movimento`;
+    document.getElementById('resumoHint').textContent = `${j.diasComDado} de 100 dias com histórico calculado · média considera só dia com movimento`;
     document.getElementById('resumoHistorico').innerHTML = `
       <div class="kpi"><div class="lbl">Média de agendamentos/dia<br><span style="font-weight:400;font-size:10.5px;">(${j.diasComAgendamento} dias com agendamento)</span></div><div class="val">${j.mediaAgendamentosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
       <div class="kpi"><div class="lbl">Média de prospectados/dia<br><span style="font-weight:400;font-size:10.5px;">(${j.diasComProspeccao} dias com prospecção)</span></div><div class="val">${j.mediaProspectadosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
-      <div class="kpi"><div class="lbl">Total de agendamentos (60d)</div><div class="val">${nf(j.totalAgendamentos)}</div></div>
+      <div class="kpi"><div class="lbl">Total de agendamentos (100d)</div><div class="val">${nf(j.totalAgendamentos)}</div></div>
     `;
   }catch(e){ /* silencioso — painel so some se nao tiver dado, sem travar o resto da tela */ }
 }
@@ -549,6 +555,10 @@ document.addEventListener('click', (e)=>{ if(!dropdown.contains(e.target)) fecha
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') fecharDropdown(); });
 
 document.getElementById('btnRefresh').addEventListener('click',atualizar);
+document.getElementById('btnExportar').addEventListener('click', ()=>{
+  const params = montarQueryPeriodo();
+  window.location.href = '/api/export?' + params.toString();
+});
 document.getElementById('dataEspecifica').addEventListener('change',atualizar);
 document.getElementById('dataInicio').addEventListener('change',atualizar);
 document.getElementById('dataFim').addEventListener('change',atualizar);

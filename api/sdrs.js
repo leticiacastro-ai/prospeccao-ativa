@@ -10,6 +10,16 @@
 const fs = require('fs');
 const path = require('path');
 
+const NOME_MAX = 80;
+const REGEX_NOME = /^[\p{L}\p{M} .'-]+$/u; // letras (com acento), espaco, ponto, apostrofo, hifen
+
+function validarNome(nome) {
+  if (!nome || nome.length < 2) return 'Nome deve ter pelo menos 2 caracteres.';
+  if (nome.length > NOME_MAX) return `Nome deve ter no maximo ${NOME_MAX} caracteres.`;
+  if (!REGEX_NOME.test(nome)) return 'Nome deve conter apenas letras, espacos, ponto, apostrofo ou hifen.';
+  return null;
+}
+
 const ARQUIVO = path.join(__dirname, '..', 'data', 'sdrs.json');
 const CHAVE_KV = 'sdrs:lista';
 
@@ -59,8 +69,10 @@ module.exports = async (req, res) => {
 
     if (req.method === 'POST') {
       const nome = (req.body && req.body.nome || '').trim();
-      if (!nome) return res.status(400).json({ error: 'Informe um nome.' });
+      const erro = validarNome(nome);
+      if (erro) return res.status(400).json({ error: erro });
       const lista = await lerLista();
+      if (lista.length >= 500) return res.status(400).json({ error: 'Limite de SDRs cadastrados atingido.' });
       if (!lista.some((n) => n.toLowerCase() === nome.toLowerCase())) {
         lista.push(nome);
         await salvarLista(lista);
@@ -71,7 +83,9 @@ module.exports = async (req, res) => {
     if (req.method === 'PUT') {
       const nomeAntigo = (req.body && req.body.nomeAntigo || '').trim();
       const nomeNovo = (req.body && req.body.nomeNovo || '').trim();
-      if (!nomeAntigo || !nomeNovo) return res.status(400).json({ error: 'Informe o nome atual e o novo nome.' });
+      if (!nomeAntigo) return res.status(400).json({ error: 'Informe o nome atual.' });
+      const erro = validarNome(nomeNovo);
+      if (erro) return res.status(400).json({ error: erro });
       const lista = await lerLista();
       const idx = lista.findIndex((n) => n.toLowerCase() === nomeAntigo.toLowerCase());
       if (idx === -1) return res.status(404).json({ error: 'SDR nao encontrado.' });
