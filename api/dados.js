@@ -237,6 +237,17 @@ function listarDiasDaFaixa(faixa) {
 // request ter chegado. Usado pelo agendamento de 5 em 5 min (server.js) pra
 // manter cacheHoje sempre fresco em background, em vez de so recalcular na
 // hora que alguem pede.
+// Fecha o cache de um dia: salva os leads brutos e, junto, uma foto de quem
+// estava cadastrado como SDR nesse exato momento. Essa foto e o que trava a
+// contagem no atendente daquele dia — sem ela, cadastrar um SDR novo hoje
+// mudaria retroativamente o total de qualquer dia fechado (ver agregar()).
+async function fecharCacheDoDia(chave, leads) {
+  const cadastroAtual = await lerSdrsCadastrados();
+  await armazenamento.salvarDia(chave, leads);
+  await armazenamento.salvarCadastroDia(chave, cadastroAtual);
+  return cadastroAtual;
+}
+
 async function atualizarCacheHoje() {
   if (!TOKEN) return;
   const hoje = inicioDoDia(new Date());
@@ -276,12 +287,16 @@ function obterProgresso() { return progressoAtual; }
 // trocar de filtro (7 dias, 30 dias, mes...) ser rapido depois da primeira vez.
 async function buscarPorDiasComCache(faixa) {
   const prazoAte = ORCAMENTO_REQUISICAO_MS ? Date.now() + ORCAMENTO_REQUISICAO_MS : null;
-  if (!faixa || !faixa.inicio) return buscarLeadsPaginado(faixa, 'sem-filtro', prazoAte);
+  if (!faixa || !faixa.inicio) {
+    const r = await buscarLeadsPaginado(faixa, 'sem-filtro', prazoAte);
+    return { ...r, snapshotsPorDia: new Map() }; // sem dia definido, agregar() cai no cadastro ao vivo
+  }
 
   const hoje = inicioDoDia(new Date());
   const chaveHoje = chaveDia(hoje);
   const dias = listarDiasDaFaixa(faixa);
   const todos = [];
+  const snapshotsPorDia = new Map(); // chave do dia -> cadastro de SDR travado naquele dia (null = dia fechado sem foto salva ainda)
   let parcial = false;
   progressoAtual = { feito: 0, total: dias.length };
 
@@ -293,16 +308,20 @@ async function buscarPorDiasComCache(faixa) {
 
       if (!ehHoje) {
         const emCache = await armazenamento.lerDia(chave);
-        if (emCache) { todos.push(...emCache); progressoAtual.feito++; continue; }
+        if (emCache) {
+          todos.push(...emCache);
+          snapshotsPorDia.set(chave, await armazenamento.lerCadastroDia(chave));
+          progressoAtual.feito++; continue;
+        }
       } else if (cacheHoje.chave === chave && (Date.now() - cacheHoje.ts) < TTL_HOJE) {
-        todos.push(...cacheHoje.leads); progressoAtual.feito++; continue;
+        todos.push(...cacheHoje.leads); progressoAtual.feito++; continue; // hoje nao fecha, nao trava cadastro
       }
 
       try {
         const r = await buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte);
         todos.push(...r.leads);
         if (r.parcial) parcial = true;
-        else if (!ehHoje) await armazenamento.salvarDia(chave, r.leads); // so grava cache de dia fechado e busca completa
+        else if (!ehHoje) snapshotsPorDia.set(chave, await fecharCacheDoDia(chave, r.leads)); // so grava/trava cache de dia fechado e busca completa
         else cacheHoje = { chave, leads: r.leads, ts: Date.now() }; // guarda hoje por TTL_HOJE, reusado por qualquer filtro
         progressoAtual.feito++;
         if (dias.length > 1) {
@@ -318,7 +337,7 @@ async function buscarPorDiasComCache(faixa) {
     progressoAtual = null;
   }
   console.log(`[api/dados] busca concluida: ${todos.length} leads no total (${dias.length} dia(s), ${parcial ? 'parcial' : 'completa'})`);
-  return { leads: todos, parcial };
+  return { leads: todos, parcial, snapshotsPorDia };
 }
 
 const DIAS_RETENCAO = 100; // guarda historico dos ultimos 100 dias, o resto e limpo
@@ -347,7 +366,7 @@ async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
     try {
       const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte));
       if (!r.parcial) {
-        await armazenamento.salvarDia(chave, r.leads);
+        await fecharCacheDoDia(chave, r.leads);
         console.log(`[api/dados] cache do dia ${chave} aquecido: ${r.leads.length} leads`);
       }
     } catch (e) {
@@ -382,7 +401,7 @@ async function revalidarDiasRecentes(diasGraca = DIAS_GRACA_REVALIDACAO) {
     try {
       const r = await comFila(() => buscarLeadsPaginado({ inicio: inicioDoDia(dia), fim: fimDoDia(dia) }, chave, prazoAte));
       if (!r.parcial) {
-        await armazenamento.salvarDia(chave, r.leads); // sobrescreve com o status mais atual
+        await fecharCacheDoDia(chave, r.leads); // sobrescreve com o status mais atual (leads e cadastro travado)
         console.log(`[api/dados] dia ${chave} revalidado: ${r.leads.length} leads`);
       }
     } catch (e) {
@@ -404,6 +423,7 @@ async function limparDiasAntigos() {
     if (isNaN(data)) continue;
     if (data < limite) {
       await armazenamento.apagarDia(chave);
+      await armazenamento.apagarCadastroDia(chave);
       console.log(`[api/dados] cache do dia ${chave} removido (mais velho que ${DIAS_RETENCAO} dias)`);
     }
   }
@@ -442,25 +462,45 @@ function agendarAquecimentoDiario(hora = 5, minuto = 0) {
   }, msAteProximoHorario(hora, minuto));
 }
 
-async function agregar(leads, faixa) {
-  // so conta quem estiver cadastrado como SDR (aba de Cadastro de SDR).
-  // se ninguem foi cadastrado ainda, nao conta ninguem — evita misturar
-  // gente de outro cargo que por acaso ficou como atendente de um lead.
-  const cadastrados = new Set((await lerSdrsCadastrados()).map((n) => n.toLowerCase()));
+// so conta quem estiver cadastrado como SDR (aba de Cadastro de SDR) —
+// evita misturar gente de outro cargo que por acaso ficou como atendente
+// de um lead. Pra dia fechado, usa o cadastro travado NAQUELE dia
+// (snapshotsPorDia), nao o cadastro atual — senao cadastrar um SDR novo
+// hoje mudaria retroativamente o total de qualquer dia ja fechado.
+// Dia sem foto salva (cache antigo, de antes dessa trava existir) e o dia
+// de hoje (ainda nao fechou) caem no cadastro ao vivo, igual antes.
+async function agregar(leads, faixa, snapshotsPorDia) {
+  const cadastroAoVivo = new Set((await lerSdrsCadastrados()).map((n) => n.toLowerCase()));
+  const cadastroPorDiaEmCache = new Map(); // chave -> Set(nomes), memoiza a conversao pra Set
+
+  function cadastroElegivel(dataCriado) {
+    if (!dataCriado || !snapshotsPorDia) return cadastroAoVivo;
+    const chave = chaveDia(dataCriado);
+    if (!snapshotsPorDia.has(chave)) return cadastroAoVivo;
+    const bruta = snapshotsPorDia.get(chave);
+    if (!bruta) return cadastroAoVivo; // dia fechado sem foto salva ainda
+    if (!cadastroPorDiaEmCache.has(chave)) {
+      cadastroPorDiaEmCache.set(chave, new Set(bruta.map((n) => n.toLowerCase())));
+    }
+    return cadastroPorDiaEmCache.get(chave);
+  }
 
   const porSdr = new Map();
   for (const lead of leads) {
     const sdr = lead.attendant || lead.atendente;
     const nomeSdr = sdr && (sdr.name || sdr.nome);
     if (!nomeSdr) continue;
+
+    const criado = lead.createdAt || lead.created_at || lead.dataCriacao;
+    const dataCriado = criado ? new Date(criado) : null;
+
+    const cadastrados = cadastroElegivel(dataCriado);
     if (!cadastrados.has(nomeSdr.toLowerCase())) continue;
 
     const tags = nomesDasTags(lead.tags);
     if (!tags.includes('ig-outbound')) continue;
 
     if (faixa && (faixa.inicio || faixa.fim)) {
-      const criado = lead.createdAt || lead.created_at || lead.dataCriacao;
-      const dataCriado = criado ? new Date(criado) : null;
       if (faixa.inicio && (!dataCriado || dataCriado < faixa.inicio)) continue;
       if (faixa.fim && (!dataCriado || dataCriado > faixa.fim)) continue;
     }
@@ -502,7 +542,8 @@ async function calcularResumoHistorico() {
     const leads = await armazenamento.lerDia(chave);
     if (!leads) continue;
     diasComDado++;
-    const linhas = await agregar(leads, null);
+    const cadastroSnapshot = await armazenamento.lerCadastroDia(chave);
+    const linhas = await agregar(leads, null, new Map([[chave, cadastroSnapshot]]));
     const agendouNoDia = linhas.reduce((a, r) => a + r.agendou, 0);
     const prospectouNoDia = linhas.reduce((a, r) => a + r.prospectou, 0);
     totalAgendou += agendouNoDia;
@@ -548,7 +589,7 @@ async function obterResultado(query) {
 
     const faixa = faixaDeData(query);
     const busca = await comFila(() => buscarPorDiasComCache(faixa));
-    const resultado = await agregar(busca.leads, faixa);
+    const resultado = await agregar(busca.leads, faixa, busca.snapshotsPorDia);
     CACHE.set(chaveCache, { data: resultado, ts: Date.now(), parcial: busca.parcial });
     return { resultado, parcial: busca.parcial };
   } catch (e) {
