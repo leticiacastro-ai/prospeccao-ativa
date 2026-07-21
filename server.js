@@ -12,6 +12,7 @@ const cronAquecer = require('./api/cron-aquecer.js');
 const cronHoje = require('./api/cron-hoje.js');
 const resumo = require('./api/resumo.js');
 const exportCsv = require('./api/export.js');
+const intervalo = require('./api/intervalo.js');
 
 const LIMITE_BODY_BYTES = 1 * 1024 * 1024; // 1MB — cadastro de SDR nao precisa de mais que isso
 
@@ -66,7 +67,8 @@ const server = http.createServer(async (req, res) => {
   if (parsed.pathname === '/api/progresso') { await progresso({}, resFake); return; }
   if (parsed.pathname === '/api/cron-aquecer') { await cronAquecer({ headers: req.headers }, resFake); return; }
   if (parsed.pathname === '/api/cron-hoje') { await cronHoje({ headers: req.headers }, resFake); return; }
-  if (parsed.pathname === '/api/resumo') { await resumo({}, resFake); return; }
+  if (parsed.pathname === '/api/resumo') { await resumo({ query: parsed.query }, resFake); return; }
+  if (parsed.pathname === '/api/intervalo') { await intervalo({}, resFake); return; }
 
   if (parsed.pathname === '/api/sdrs') {
     let corpo = {};

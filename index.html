@@ -177,7 +177,14 @@
 
     <div class="panel" id="painelResumoHistorico" style="display:none">
       <div class="panel-head">
-        <h2>Média diária — últimos 100 dias</h2>
+        <h2>Média diária</h2>
+        <select id="resumoJanela" style="font-family:inherit;font-size:12.5px;background:var(--card);border:1px solid var(--line);color:var(--ink);padding:6px 9px;border-radius:8px;">
+          <option value="10">Últimos 10 dias</option>
+          <option value="30">Últimos 30 dias</option>
+          <option value="60">Últimos 60 dias</option>
+          <option value="90">Últimos 90 dias</option>
+          <option value="100" selected>Últimos 100 dias</option>
+        </select>
         <div class="hint" id="resumoHint"></div>
       </div>
       <div class="summary" id="resumoHistorico" style="margin-bottom:0"></div>
@@ -398,19 +405,21 @@ function renderStatus(){
 
 async function carregarResumoHistorico(){
   try{
-    const r = await fetch('/api/resumo');
+    const janela = document.getElementById('resumoJanela').value;
+    const r = await fetch('/api/resumo?dias=' + janela);
     const j = await r.json();
     const painel = document.getElementById('painelResumoHistorico');
     if(!j.diasComDado){ painel.style.display='none'; return; }
     painel.style.display='';
-    document.getElementById('resumoHint').textContent = `${j.diasComDado} de 100 dias com histórico calculado · média considera só dia com movimento`;
+    document.getElementById('resumoHint').textContent = `${j.diasComDado} de ${j.janela} dias com histórico calculado · média considera só dia com movimento`;
     document.getElementById('resumoHistorico').innerHTML = `
       <div class="kpi"><div class="lbl">Média de agendamentos/dia<br><span style="font-weight:400;font-size:10.5px;">(${j.diasComAgendamento} dias com agendamento)</span></div><div class="val">${j.mediaAgendamentosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
       <div class="kpi"><div class="lbl">Média de prospectados/dia<br><span style="font-weight:400;font-size:10.5px;">(${j.diasComProspeccao} dias com prospecção)</span></div><div class="val">${j.mediaProspectadosPorDia.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div></div>
-      <div class="kpi"><div class="lbl">Total de agendamentos (100d)</div><div class="val">${nf(j.totalAgendamentos)}</div></div>
+      <div class="kpi"><div class="lbl">Total de agendamentos (${j.janela}d)</div><div class="val">${nf(j.totalAgendamentos)}</div></div>
     `;
   }catch(e){ /* silencioso — painel so some se nao tiver dado, sem travar o resto da tela */ }
 }
+document.getElementById('resumoJanela').addEventListener('change', carregarResumoHistorico);
 
 function renderResumo(){
   const prosp=sum(dados,'prospectou'), cli=sum(dados,'cliente'), agen=sum(dados,'agendou'), comp=sum(dados,'compareceu');
@@ -609,6 +618,22 @@ function linhaComparar(label, a, b, ehPercentual){
   const vb = ehPercentual ? pf(b,1) : nf(b);
   return `<tr><td style="text-align:left;">${label}</td><td>${nf(a)}</td><td>${nf(b)}</td><td style="color:${cor};font-weight:600;">${sinal}${diff.toFixed(1)}%</td></tr>`;
 }
+// Trava as datas escolhiveis (dashboard e comparar) no que a base
+// realmente tem guardado — evita montar uma comparacao com data de fora
+// do historico mantido (isso dispararia busca ao vivo sem cache).
+let faixaBase = null;
+async function carregarFaixaBase(){
+  try{
+    const r = await fetch('/api/intervalo');
+    faixaBase = await r.json();
+    ['compA_inicio','compA_fim','compB_inicio','compB_fim','dataEspecifica','dataInicio','dataFim'].forEach(id=>{
+      const el = document.getElementById(id);
+      el.min = faixaBase.inicio; el.max = faixaBase.fim;
+    });
+  }catch(e){ /* sem faixa carregada, segue sem trava (validacao do servidor ainda se aplica) */ }
+}
+carregarFaixaBase();
+
 document.getElementById('btnComparar').addEventListener('click', async ()=>{
   const aIni = document.getElementById('compA_inicio').value, aFim = document.getElementById('compA_fim').value;
   const bIni = document.getElementById('compB_inicio').value, bFim = document.getElementById('compB_fim').value;
@@ -617,6 +642,14 @@ document.getElementById('btnComparar').addEventListener('click', async ()=>{
   if(!aIni || !aFim || !bIni || !bFim){
     aviso.textContent = 'Preencha as duas datas dos dois períodos.'; aviso.classList.add('show'); wrap.style.display='none';
     return;
+  }
+  if(faixaBase){
+    const foraDaFaixa = [aIni,aFim,bIni,bFim].some(d => d < faixaBase.inicio || d > faixaBase.fim);
+    if(foraDaFaixa){
+      aviso.textContent = `Escolha datas entre ${faixaBase.inicio} e ${faixaBase.fim} — é o período que a base tem guardado.`;
+      aviso.classList.add('show'); wrap.style.display='none';
+      return;
+    }
   }
   aviso.classList.remove('show');
   const btn = document.getElementById('btnComparar');

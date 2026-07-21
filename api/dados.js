@@ -237,14 +237,29 @@ function listarDiasDaFaixa(faixa) {
 // request ter chegado. Usado pelo agendamento de 5 em 5 min (server.js) pra
 // manter cacheHoje sempre fresco em background, em vez de so recalcular na
 // hora que alguem pede.
-// Fecha o cache de um dia: salva os leads brutos e, junto, uma foto de quem
-// estava cadastrado como SDR nesse exato momento. Essa foto e o que trava a
-// contagem no atendente daquele dia — sem ela, cadastrar um SDR novo hoje
-// mudaria retroativamente o total de qualquer dia fechado (ver agregar()).
+// Soma o resultado de agregar() (por SDR) num total unico do dia — e esse
+// total pronto que fica salvo em resumo-dia, pro painel de media so somar
+// numero pronto em vez de reprocessar lead por lead toda vez.
+function somarLinhasDoDia(linhas) {
+  const totais = { prospectou: 0, respondeu: 0, agendou: 0, compareceu: 0, cliente: 0 };
+  for (const l of linhas) {
+    totais.prospectou += l.prospectou; totais.respondeu += l.respondeu; totais.agendou += l.agendou;
+    totais.compareceu += l.compareceu; totais.cliente += l.cliente;
+  }
+  return totais;
+}
+
+// Fecha o cache de um dia: salva os leads brutos, uma foto de quem estava
+// cadastrado como SDR nesse exato momento (trava a contagem no atendente
+// daquele dia — ver agregar()) e o resumo do dia ja agregado (pro painel de
+// media nao precisar reprocessar lead por lead toda vez que alguem troca a
+// janela de dias).
 async function fecharCacheDoDia(chave, leads) {
   const cadastroAtual = await lerSdrsCadastrados();
   await armazenamento.salvarDia(chave, leads);
   await armazenamento.salvarCadastroDia(chave, cadastroAtual);
+  const linhas = await agregar(leads, null, new Map([[chave, cadastroAtual]]));
+  await armazenamento.salvarResumoDia(chave, somarLinhasDoDia(linhas));
   return cadastroAtual;
 }
 
@@ -513,10 +528,32 @@ async function agregar(leads, faixa, snapshotsPorDia) {
   return resultado;
 }
 
-// Resumo dos ultimos 100 dias fechados (so os que ja tem cache salvo — nao
-// bate no Datacrazy, so le o que ja foi guardado). Usado pro painel de
-// media, nao pro filtro escolhido pelo usuario.
-async function calcularResumoHistorico() {
+const DIAS_MEDIA_MAX = 3650; // trava janela absurda tipo dias=999999
+
+// Le o resumo pronto de um dia (resumo-dia). Se nao tiver ainda — dia
+// fechado antes dessa cache existir — calcula na hora a partir do cache de
+// leads e guarda pra da proxima vez ja vir pronto (self-heal, sem precisar
+// de migracao manual).
+async function resumoDoDia(chave) {
+  const pronto = await armazenamento.lerResumoDia(chave);
+  if (pronto) return pronto;
+
+  const leads = await armazenamento.lerDia(chave);
+  if (!leads) return null;
+  const cadastroSnapshot = await armazenamento.lerCadastroDia(chave);
+  const linhas = await agregar(leads, null, new Map([[chave, cadastroSnapshot]]));
+  const totais = somarLinhasDoDia(linhas);
+  await armazenamento.salvarResumoDia(chave, totais);
+  return totais;
+}
+
+// Resumo dos ultimos N dias fechados. So le o resumo ja pronto de cada dia
+// (resumo-dia, calculado uma vez quando o dia fecha/revalida em
+// fecharCacheDoDia) — nao reprocessa lead por lead a cada chamada, nem bate
+// no Datacrazy. Usado pro painel de media, nao pro filtro escolhido pelo
+// usuario no dashboard.
+async function calcularResumoHistorico(dias = DIAS_HISTORICO_MINIMO) {
+  const janela = Math.min(Math.max(parseInt(dias, 10) || DIAS_HISTORICO_MINIMO, 1), DIAS_MEDIA_MAX);
   const hoje = inicioDoDia(new Date());
   let totalAgendou = 0;
   let totalProspectou = 0;
@@ -524,23 +561,20 @@ async function calcularResumoHistorico() {
   let diasComAgendamento = 0;
   let diasComProspeccao = 0;
 
-  for (let i = 1; i <= DIAS_HISTORICO_MINIMO; i++) {
+  for (let i = 1; i <= janela; i++) {
     const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
     const chave = chaveDia(dia);
-    const leads = await armazenamento.lerDia(chave);
-    if (!leads) continue;
+    const totais = await resumoDoDia(chave);
+    if (!totais) continue;
     diasComDado++;
-    const cadastroSnapshot = await armazenamento.lerCadastroDia(chave);
-    const linhas = await agregar(leads, null, new Map([[chave, cadastroSnapshot]]));
-    const agendouNoDia = linhas.reduce((a, r) => a + r.agendou, 0);
-    const prospectouNoDia = linhas.reduce((a, r) => a + r.prospectou, 0);
-    totalAgendou += agendouNoDia;
-    totalProspectou += prospectouNoDia;
-    if (agendouNoDia > 0) diasComAgendamento++;
-    if (prospectouNoDia > 0) diasComProspeccao++;
+    totalAgendou += totais.agendou;
+    totalProspectou += totais.prospectou;
+    if (totais.agendou > 0) diasComAgendamento++;
+    if (totais.prospectou > 0) diasComProspeccao++;
   }
 
   return {
+    janela,
     diasComDado,
     diasComAgendamento,
     diasComProspeccao,
@@ -549,6 +583,18 @@ async function calcularResumoHistorico() {
     totalProspectados: totalProspectou,
     mediaProspectadosPorDia: diasComProspeccao > 0 ? totalProspectou / diasComProspeccao : 0,
   };
+}
+
+// Faixa de datas que a base realmente tem guardada — do dia fechado mais
+// antigo no cache ate hoje. Usado pra travar "Comparar periodos" (e outros
+// seletores de data) num intervalo que a base ja cobre, em vez de deixar
+// escolher qualquer data e disparar busca ao vivo sem cache no Datacrazy.
+async function faixaHistoricoDisponivel() {
+  const hoje = chaveDia(inicioDoDia(new Date()));
+  const chaves = await armazenamento.listarChaves();
+  if (!chaves.length) return { inicio: hoje, fim: hoje };
+  const inicio = chaves.reduce((menor, atual) => (atual < menor ? atual : menor));
+  return { inicio, fim: hoje };
 }
 
 // Busca + agrega pro periodo pedido, com o mesmo cache de resposta usado
@@ -613,3 +659,4 @@ module.exports.limparCacheResposta = () => CACHE.clear();
 module.exports.obterProgresso = obterProgresso;
 module.exports.calcularResumoHistorico = calcularResumoHistorico;
 module.exports.obterResultado = obterResultado;
+module.exports.faixaHistoricoDisponivel = faixaHistoricoDisponivel;

@@ -16,12 +16,17 @@
 //      era antes); na melhor, economiza buscas de graca, sem
 //      precisar configurar nada.
 //
-//  Dois espacos, mesmo esquema (chave = "AAAA-MM-DD"):
+//  Tres espacos, mesmo esquema (chave = "AAAA-MM-DD"):
 //   - leads-dia: os leads brutos do dia.
 //   - sdrs-cadastro-dia: quem estava cadastrado como SDR no momento
 //     em que o dia foi fechado/revalidado — usado pra travar a
 //     contagem no atendente daquele dia, sem deixar um cadastro
 //     novo (de hoje) mudar retroativamente o total de dias fechados.
+//   - resumo-dia: totais por etapa (prospectou/respondeu/agendou/
+//     compareceu/cliente) ja agregados do dia — calculado uma vez
+//     quando o dia fecha/revalida, pra o painel de media (api/resumo.js)
+//     so somar numero pronto em vez de reprocessar lead por lead toda
+//     vez que alguem troca a janela (10, 30, 60... dias).
 // ============================================================
 
 const fs = require('fs');
@@ -80,6 +85,7 @@ function criarArmazenamentoPorDia(nomeEspaco) {
 
 const leadsDia = criarArmazenamentoPorDia('leads-dia');
 const cadastroDia = criarArmazenamentoPorDia('sdrs-cadastro-dia');
+const resumoDia = criarArmazenamentoPorDia('resumo-dia');
 
 module.exports = {
   lerDia: leadsDia.lerDia,
@@ -90,6 +96,9 @@ module.exports = {
   lerCadastroDia: cadastroDia.lerDia,
   salvarCadastroDia: cadastroDia.salvarDia,
   apagarCadastroDia: cadastroDia.apagarDia,
+
+  lerResumoDia: resumoDia.lerDia,
+  salvarResumoDia: resumoDia.salvarDia,
 
   USANDO_KV,
 };
