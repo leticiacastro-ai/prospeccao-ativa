@@ -55,20 +55,21 @@ rate limit (120 req/min). Por isso `dados.js` separa por **dia fechado** vs **ho
 - **Hoje:** guardado em memória (`cacheHoje`), atualizado no máximo 1x a cada 5 min
   (`TTL_HOJE`), tanto por request quanto por um `setInterval` em background
   (`server.js` chama `agendarAtualizacaoHoje()` no boot).
-- **Retenção:** `DIAS_RETENCAO = 100`. Todo dia mais velho que isso é apagado
-  (`limparDiasAntigos`). Bate exatamente com a opção "Últimos 100 dias" do filtro e com a janela
-  fixa do painel de média (`/api/resumo`, sempre olha os últimos 100 dias fechados).
-- **Aquecimento:** `agendarAquecimentoDiario` roda `rodarManutencaoDoCache` (limpa velhos +
-  busca dias faltando + revalida os 14 recentes) uma vez no boot e todo dia às 5h — assim quem
-  abre o dashboard de manhã já acha os números prontos.
+- **Histórico não tem teto:** `DIAS_HISTORICO_MINIMO = 100` é só o **piso** — profundidade do
+  backfill inicial (`aquecerDiasFechados`) e a janela fixa do painel de média
+  (`/api/resumo`, sempre olha os últimos 100 dias fechados). Nada é apagado: a partir do deploy,
+  cada dia fechado novo só se soma aos que já existem (101, 102, 103 dias de histórico e assim
+  por diante, pra sempre). Isso foi uma mudança deliberada — antes existia uma limpeza
+  (`limparDiasAntigos`) que apagava dia mais velho que 100, foi removida.
+- **Aquecimento:** `agendarAquecimentoDiario` roda `rodarManutencaoDoCache` (busca dias fechados
+  faltando + revalida os 14 recentes) uma vez no boot e todo dia às 5h — assim quem abre o
+  dashboard de manhã já acha os números prontos.
 
-**Resposta à pergunta "pega os últimos X dias corretamente e mantém esses X dias":** sim.
-Verifiquei ao vivo: `data/leads-dia/` tinha exatamente **100 arquivos**, do dia mais antigo até
-2 dias atrás — condizente com `DIAS_RETENCAO=100`. O filtro "Últimos N dias" (`faixaDeData` em
-`dados.js:126-131`) calcula `hoje - (N-1)` dias, ou seja N dias incluindo hoje (esse off-by-one já
-foi corrigido, ver commit `6faade4`). Único ponto de atenção: o cache mais recente salvo era de
-2 dias atrás, não ontem — sinal de que o processo (PM2 na VPS) pode ter ficado parado por um
-tempo nessa cópia local; não é bug de lógica, é operacional (ver "Rodando" abaixo).
+**Resposta à pergunta "pega os últimos X dias corretamente e mantém esses X dias":** sim, o
+filtro "Últimos N dias" (`faixaDeData` em `dados.js:103-133`) calcula `hoje - (N-1)` dias, ou
+seja N dias incluindo hoje (esse off-by-one já foi corrigido, ver commit `6faade4`). O histórico
+guardado na base é pelo menos 100 dias (garantido no deploy) e só cresce depois disso, nunca
+encolhe.
 
 ### Proteções contra rate limit / timeout
 
@@ -129,8 +130,9 @@ um cron externo — por isso o processo precisa ficar de pé continuamente (PM2 
 - **Cache por dia**: dia fechado só é buscado uma vez; hoje é refrescado a cada 5 min; últimos
   14 dias são revalidados toda madrugada pra pegar avanço tardio no funil. Lógica consistente
   entre boot, agendamento diário e o próprio filtro do usuário.
-- **Retenção**: 100 dias mantidos, mais velho que isso é limpo — bate com a UI (opção máxima do
-  filtro é "100 dias") e com o painel de média (sempre 100 dias fixos).
+- **Histórico**: piso de 100 dias garantido a partir do deploy, sem teto — nada é apagado, a base
+  só cresce (101, 102, 103... dias). Painel de média continua com janela fixa de 100 dias, à parte
+  do tamanho real do histórico guardado.
 - **Agregação por SDR**: só conta lead com SDR cadastrado + tag `ig-outbound`; etapa é a maior
   tag batida. Taxa de conversão dado por `cliente/prospectou`.
 - **Trava por dia (corrigido)**: encontramos e corrigimos um caso em que "Leads prospectados"

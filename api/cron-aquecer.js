@@ -1,8 +1,9 @@
 // ============================================================
 //  api/cron-aquecer.js — chamado pelo Vercel Cron todo dia as 3h
 // ------------------------------------------------------------
-//  Faz o que o agendamento local (server.js) faz sozinho: limpa
-//  o dia que passou dos 100 e busca o(s) dia(s) que ainda faltar.
+//  Faz o que o agendamento local (server.js) faz sozinho: busca o(s)
+//  dia(s) fechado(s) que ainda faltar e revalida os mais recentes.
+//  Nao apaga nada — o historico so cresce a partir do deploy.
 //  So funciona de verdade se o Vercel KV estiver configurado
 //  (ver api/armazenamento.js) — sem KV, roda mas nao persiste
 //  nada entre as chamadas.

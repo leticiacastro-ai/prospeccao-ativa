@@ -340,13 +340,18 @@ async function buscarPorDiasComCache(faixa) {
   return { leads: todos, parcial, snapshotsPorDia };
 }
 
-const DIAS_RETENCAO = 100; // guarda historico dos ultimos 100 dias, o resto e limpo
+// Minimo de historico que a base deve ter, contado a partir de agora pra
+// tras. Nao e um teto: nada e apagado — a partir do deploy, cada dia
+// fechado novo so vai se somando aos que ja existem (101, 102, 103...).
+// So serve como profundidade do backfill inicial (aquecerDiasFechados) e
+// como janela fixa do painel de media (calcularResumoHistorico).
+const DIAS_HISTORICO_MINIMO = 100;
 
 // Roda de madrugada (ou quando o servidor sobe): busca e salva o cache de
 // todo dia fechado que ainda estiver faltando (nao so ontem — cobre o caso
 // do servidor ter ficado desligado alguns dias). Assim quem abrir o
 // dashboard de manha ja acha os numeros prontos, sem esperar calcular.
-async function aquecerDiasFechados(diasParaTras = DIAS_RETENCAO) {
+async function aquecerDiasFechados(diasParaTras = DIAS_HISTORICO_MINIMO) {
   if (!TOKEN) return;
   // na Vercel (Cron tem o mesmo limite de execucao da funcao), so da tempo
   // de fechar 1-2 dias por chamada — no regime normal (so falta ontem) isso
@@ -412,23 +417,6 @@ async function revalidarDiasRecentes(diasGraca = DIAS_GRACA_REVALIDACAO) {
   }
 }
 
-// Apaga cache de dia mais velho que DIAS_RETENCAO — mantem so o historico
-// recente, sem deixar o armazenamento crescer pra sempre.
-async function limparDiasAntigos() {
-  const limite = inicioDoDia(new Date());
-  limite.setDate(limite.getDate() - DIAS_RETENCAO);
-  const chaves = await armazenamento.listarChaves();
-  for (const chave of chaves) {
-    const data = new Date(chave + 'T00:00:00');
-    if (isNaN(data)) continue;
-    if (data < limite) {
-      await armazenamento.apagarDia(chave);
-      await armazenamento.apagarCadastroDia(chave);
-      console.log(`[api/dados] cache do dia ${chave} removido (mais velho que ${DIAS_RETENCAO} dias)`);
-    }
-  }
-}
-
 // Calcula quanto tempo falta ate o proximo horario HH:MM (hora local).
 function msAteProximoHorario(hora, minuto) {
   const agora = new Date();
@@ -438,13 +426,13 @@ function msAteProximoHorario(hora, minuto) {
   return proximo - agora;
 }
 
-// Uma rodada de manutencao: limpa o que passou dos 100 dias, busca o que
-// tiver faltando, e reprocessa os ultimos dias (pra pegar avanco no funil
-// que so aconteceu depois do dia em que o lead foi prospectado). Usado tanto
-// pelo agendamento local (server.js) quanto pelo Vercel Cron em producao
-// (api/cron-aquecer.js).
+// Uma rodada de manutencao: busca o que tiver faltando (backfill de pelo
+// menos DIAS_HISTORICO_MINIMO dias) e reprocessa os ultimos dias (pra pegar
+// avanco no funil que so aconteceu depois do dia em que o lead foi
+// prospectado). Nada e apagado — o historico so cresce a partir do deploy.
+// Usado tanto pelo agendamento local (server.js) quanto pelo Vercel Cron em
+// producao (api/cron-aquecer.js).
 async function rodarManutencaoDoCache() {
-  await limparDiasAntigos().catch(() => {});
   await aquecerDiasFechados().catch(() => {}); // preenche o que ainda nao tem cache nenhum
   await revalidarDiasRecentes().catch(() => {}); // reprocessa os ultimos dias, pega status que so se resolveu depois
 }
@@ -536,7 +524,7 @@ async function calcularResumoHistorico() {
   let diasComAgendamento = 0;
   let diasComProspeccao = 0;
 
-  for (let i = 1; i <= DIAS_RETENCAO; i++) {
+  for (let i = 1; i <= DIAS_HISTORICO_MINIMO; i++) {
     const dia = new Date(hoje); dia.setDate(dia.getDate() - i);
     const chave = chaveDia(dia);
     const leads = await armazenamento.lerDia(chave);
